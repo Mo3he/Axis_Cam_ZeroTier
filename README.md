@@ -42,8 +42,15 @@ Go to "Apps" on the camera and click "Add app".
 ## Using the ZeroTier ACAP
 
 Once running you will need to enable ssh on the camera then connect via ssh to control ZeroTier via the cli.
+
 cd to /usr/local/packages/ZeroTier_VPN/lib/ then use ./zerotier-one -q to interface with the cli.
-Run ./zerotier-one -q join (network id) to join a network.
+
+Run 
+
+```
+./zerotier-one -q join <network id>
+```
+where `<network id>` is your network id to join a network.
 
 When uninstalling the ACAP, all changes and files are removed from the camera.
 
@@ -60,7 +67,7 @@ Make sure you use the files for the correct Soc.
 
 Latest versions can be found at 
 
-https://download.zerotier.com/RELEASES/1.4.6/dist/static-binaries/
+https://download.zerotier.com/RELEASES/
 
 
 To build, 
