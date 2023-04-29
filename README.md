@@ -4,6 +4,8 @@ This ACAP packages the scripts and files required to install the ZeroTier VPN cl
 
 Current version 1.00.0
 
+**This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
+
 ## Purpose
 
 Adding a VPN client directly to the camera allows secure remote access to the device without requiring any other equipment or network configuration.
