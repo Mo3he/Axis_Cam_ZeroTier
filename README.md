@@ -56,6 +56,8 @@ When uninstalling the ACAP, all changes and files are removed from the camera.
 
 You will need a ZeroTier.com account to use the ACAP
 
+**please ignore the output from the app log, this is still being worked out, if you want to know the status run ./zerotier-one -q status **
+
 ## Updating ZeroTier version
 
 The eap files will be updated from time to time and simply installing the new version over the old will update all files.
