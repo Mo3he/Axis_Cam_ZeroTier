@@ -14,9 +14,9 @@ ZeroTier is based on WireGuard VPN tunneling technology.
 
 ## Links
 
-https://ZeroTier.com/
+https://zerotier.com/
 
-https://github.com/ZeroTier 
+https://github.com/zerotier 
 
 https://www.wireguard.com/
 
