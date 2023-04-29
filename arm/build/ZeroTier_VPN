@@ -1,0 +1,7 @@
+#!/bin/sh
+
+    echo "Starting Service"
+    chmod 777 /usr/local/packages/ZeroTier_VPN/lib/zerotier-one
+    /usr/local/packages/ZeroTier_VPN/lib/zerotier-one -d &
+    echo "Service Started"
+    wait
