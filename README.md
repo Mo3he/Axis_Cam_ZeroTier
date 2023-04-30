@@ -10,15 +10,12 @@ Current version 1.4.6
 
 Adding a VPN client directly to the camera allows secure remote access to the device without requiring any other equipment or network configuration.
 ZeroTier achieves this in a secure way.
-ZeroTier is based on WireGuard VPN tunneling technology.
 
 ## Links
 
 https://zerotier.com/
 
 https://github.com/zerotier 
-
-https://www.wireguard.com/
 
 https://www.axis.com/
 
