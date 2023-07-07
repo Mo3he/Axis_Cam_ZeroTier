@@ -8,6 +8,6 @@ APPUSR="root"
 VENDORHOMEPAGELINK='<a href="https://www.zerotier.com" target="_blank">www.zerotier.com</a>'
 STARTMODE="once"
 APPMAJORVERSION="1"
-APPMINORVERSION="4"
+APPMINORVERSION="10"
 APPMICROVERSION="6"
 SETTINGSPAGEFILE="index.html"

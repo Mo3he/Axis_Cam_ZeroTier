@@ -2,7 +2,7 @@
 
 This ACAP packages the scripts and files required to install the ZeroTier VPN client on Axis Cameras.
 
-Current version 1.4.6
+Current version 1.10.6
 
 **This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
 
@@ -61,12 +61,12 @@ The eap files will be updated from time to time and simply installing the new ve
 
 It's also possible to build and use a locally built image as all necesary files are provided.
 
-Replace binarie "zerotier-one" in lib folder with new versions. (remove the .aarch64 or .arm extension from the file name)
+Replace binarie "zerotier-one" in lib folder with new versions.
 Make sure you use the files for the correct Soc.
 
-Latest versions can be found at 
+Latest versions can be built at 
 
-https://download.zerotier.com/RELEASES/
+https://github.com/Mo3he/ZeroTierOne-Static
 
 
 To build, 
