@@ -2,7 +2,7 @@
 
 This ACAP packages the scripts and files required to install the ZeroTier VPN client on Axis Cameras.
 
-Current version 1.10.6
+Current version 1.12.2
 
 **This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
 
