@@ -1,5 +1,3 @@
-If you like the ACAP, please consider sponsoring my work ----------------->>>>>>>>>>>>>>>>>>>>>>>>>
-
 # The ZeroTier installer ACAP
 
 This ACAP packages the scripts and files required to install the ZeroTier VPN client on Axis Cameras.
