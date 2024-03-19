@@ -7,7 +7,7 @@ Current version 1.12.2
 **This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
 
 ## Warning
-Unfortunately Axis is making changes to its firmware that will have breaking changes for a lot of ACAPs including my own and as of today there is no way to ready my ACAPs for these changes.
+Unfortunately Axis is making changes to its firmware that will prevent the use of a lot of ACAPs including my own and as of today there is no way to ready my ACAPs for these changes.
 
 You can read more here
 
