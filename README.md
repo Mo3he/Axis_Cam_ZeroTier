@@ -7,7 +7,9 @@ Current version 1.12.2
 **This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
 
 ## Warning
-Unfortunately Axis is making changes to its firmware that will prevent the use of a lot of ACAPs including my own and as of today there is no way to ready my ACAPs for these changes.
+Axis is making changes to its firmware that will include the removal of root privliages from ACAP.
+With the release of Axis OS 12, ACAP's requiring root will no longer work.
+The ZeroTier ACAP requires root to function.
 
 You can read more here
 
