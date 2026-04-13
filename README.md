@@ -1,94 +1,103 @@
-# The ZeroTier installer ACAP
+# ZeroTier VPN ACAP
 
-This ACAP packages the scripts and files required to install the ZeroTier VPN client on Axis Cameras.
+A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application.
 
-Current version 1.12.2
+Current version: 1.8.10
 
-**This repo is still under development, any and all ideas or assistance would be greatly appreciated.**
+Download the pre-built `.eap` for your camera's architecture from the
+[latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
+and install via the camera's web interface under Apps → Add app.
 
-## Warning
-Axis is making changes to its firmware that will include the removal of root privileges from ACAP.
-With the release of Axis OS 12, ACAP's requiring root will no longer work.
-The ZeroTier ACAP requires root to function.
+## Overview
 
-You can read more here
+Adding a VPN client directly to the camera allows secure remote access without
+requiring any other equipment or network configuration. ZeroTier achieves this
+in a secure, simple, and lightweight way.
 
-https://help.axis.com/en-us/axis-os#upcoming-breaking-changes
+Version 1.8.10 is a full rewrite of the networking layer. The app now runs
+entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
+Sockets SDK + lwIP TCP/IP stack), which means:
 
-If you have a use case where certain functionality used by an ACAP application currently requires root-user permissions or have a question about ACAP application signing, please contact Axis at acap-privileges@axis.com
+- **No root required** — runs as the standard unprivileged `sdk` ACAP user
+- **Compatible with Axis OS 11 and 12** — OS 12 blocked root ACAP apps; this version works on both
+- **No kernel TUN device** — all networking is handled inside the process
 
-Thank you for your continued support.
+## How it works
 
-## Purpose
+Once connected, the camera is reachable from the ZeroTier network via:
 
-Adding a VPN client directly to the camera allows secure remote access to the device without requiring any other equipment or network configuration.
-ZeroTier achieves this in a secure way.
-
-## Links
-
-https://zerotier.com/
-
-https://github.com/zerotier 
-
-https://www.axis.com/
+- **Direct port forwarding** — ports 80 (HTTP), 443 (HTTPS), and 554 (RTSP) on
+  the ZeroTier IP are transparently forwarded to the camera's local services.
+  Point your browser or RTSP client directly at the ZeroTier IP.
+- **SOCKS5 proxy on port 1080** — configure any SOCKS5-aware client to use
+  `<zerotier-ip>:1080` for access to any camera port.
 
 ## Compatibility
 
-The ZeroTier ACAP is compatable with Axis cameras with arm and aarch64 based Soc's.
+Works on Axis cameras with ARM or aarch64 SoCs running Axis OS 11.11 (LTS) or
+later, including Axis OS 12.
+
+To check your camera's architecture:
 
 ```
-curl --anyauth "*" -u <username>:<password> <device ip>/axis-cgi/basicdeviceinfo.cgi --data "{\"apiVersion\":\"1.0\",\"context\":\"Client defined request ID\",\"method\":\"getAllProperties\"}"
+curl --digest -u <username>:<password> \
+  http://<device-ip>/axis-cgi/param.cgi?action=list&group=Properties.System.Architecture
 ```
-
-where `<device ip>` is the IP address of the Axis device, `<username>` is the root username and `<password>` is the root password. Please
-note that you need to enclose your password with quotes (`'`) if it contains special characters.
 
 ## Installing
 
-The recommended way to install this ACAP is to use the pre built eap file.
-Go to "Apps" on the camera and click "Add app".
+Download the pre-built `.eap` for your camera's architecture from the
+[latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
+and install via the camera's web interface under Apps → Add app.
 
+| Architecture               | File                              |
+|---------------------------|-----------------------------------|
+| aarch64 (most cameras 2019+) | `ZeroTier_VPN_1_8_10_aarch64.eap` |
+| armv7hf (older cameras)      | `ZeroTier_VPN_1_8_10_armv7hf.eap` |
 
-## Using the ZeroTier ACAP
+## Configuration
 
-Once running you will need to enable ssh on the camera then connect via ssh to control ZeroTier via the cli.
+1. Start the app.
+2. Go to the app's settings page (⋮ → Settings).
+3. Enter your **ZeroTier Network ID** (16-character hex string from
+   [my.zerotier.com](https://my.zerotier.com)).
+4. Click **Open** to view the status page and logs.
+5. **Authorize the device** — go to
+   [ZeroTier Central](https://my.zerotier.com), find the camera's Node ID in
+   your network members, and check the "Auth" box.
 
-cd to /usr/local/packages/ZeroTier_VPN/lib/ then use ./zerotier-one -q to interface with the cli.
-
-Run 
-
-```
-./zerotier-one -q join <network id>
-```
-where `<network id>` is your network id to join a network.
+Once authorized, the camera will receive a ZeroTier IP address and the port
+forwarders will start automatically.
 
 When uninstalling the ACAP, all changes and files are removed from the camera.
 
-You will need a ZeroTier.com account to use the ACAP
+## Building from source
 
-**please ignore the output from the app log, this is still being worked out, if you want to know the status run ./zerotier-one -q status**
-
-## Building it yourself
-
-The eap files will be updated from time to time and simply installing the new version over the old will update all files.
-
-It's also possible to build and use a locally built image as all necesary files are provided.
-
-Replace binarie "zerotier-one" in lib folder with new versions.
-Make sure you use the files for the correct Soc.
-
-Latest versions can be built at 
-
-https://github.com/Mo3he/ZeroTierOne-Static
-
-
-To build, 
-From main directory of the version you want (arm/aarch64)
+Requires Docker.
 
 ```
-docker build --tag <package name> . 
+./build.sh
 ```
-```
-docker cp $(docker create <package name>):/opt/app ./build 
-```
+
+This builds both architectures, copies the `.eap` files to the repo root, and
+cleans up temporary containers.
+
+The build:
+1. Cross-compiles [libzt](https://github.com/zerotier/libzt) for the target
+   architecture using the ACAP SDK toolchain
+2. Builds the userspace proxy binary (linked with libzt)
+3. Packages everything as an ACAP `.eap`
+
+## Legacy versions
+
+The old root-based ACAP (v1.x) is preserved in the `aarch64/` and `arm/`
+directories for reference. These versions require root and will **not** work on
+Axis OS 12+.
+
+## Links
+
+- [ZeroTier](https://zerotier.com/)
+- [ZeroTier GitHub](https://github.com/zerotier)
+- [libzt (ZeroTier Sockets SDK)](https://github.com/zerotier/libzt)
+- [Axis Communications](https://www.axis.com/)
 

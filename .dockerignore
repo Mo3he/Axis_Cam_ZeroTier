@@ -1,0 +1,5 @@
+aarch64/
+arm/
+*.eap
+.git
+.DS_Store

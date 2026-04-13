@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+for ARCH in aarch64 armv7hf; do
+    echo "==> Building ${ARCH}..."
+    docker build --build-arg ARCH="${ARCH}" --tag "zerotier-vpn-${ARCH}" "$REPO_ROOT"
+
+    echo "==> Extracting ${ARCH} .eap package..."
+    CID=$(docker create "zerotier-vpn-${ARCH}")
+    docker cp "${CID}":/opt/app/ "/tmp/${ARCH}-out"
+    cp "/tmp/${ARCH}-out"/*.eap "$REPO_ROOT/"
+    docker rm "${CID}" >/dev/null
+    rm -rf "/tmp/${ARCH}-out"
+done
+
+echo "==> Done!"
+ls -lh "$REPO_ROOT"/*.eap

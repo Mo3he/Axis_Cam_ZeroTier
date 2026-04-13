@@ -1,0 +1,29 @@
+{
+    "schemaVersion": "1.7.0",
+    "acapPackageConf": {
+        "setup": {
+            "friendlyName": "ZeroTier VPN",
+            "appName": "ZeroTier_VPN",
+            "vendor": "ZeroTier - Packaged by Mo3he",
+            "embeddedSdkVersion": "3.0",
+            "vendorUrl": "https://www.zerotier.com",
+            "runMode": "respawn",
+            "version": "BUILDVER",
+            "user": {
+                "group": "sdk",
+                "username": "sdk"
+            },
+            "architecture": "BUILDARCH"
+        },
+        "configuration": {
+            "settingPage": "index.html",
+            "paramConfig": [
+                {
+                    "name": "NetworkID",
+                    "default": "",
+                    "type": "string"
+                }
+            ]
+        }
+    }
+}

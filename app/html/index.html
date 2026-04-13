@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ZeroTier VPN</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #181b23;
+            --surface2: #1e2230;
+            --border: #262a35;
+            --text: #e4e6ed;
+            --muted: #8b8fa3;
+            --accent: #f89b29;
+            --green: #22c55e;
+            --yellow: #f59e0b;
+            --red: #ef4444;
+            --radius: 10px;
+            --mono: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+
+        [data-theme="light"] {
+            --bg: #f5f6f8;
+            --surface: #ffffff;
+            --surface2: #f0f1f4;
+            --border: #e0e3e8;
+            --text: #1a1a2e;
+            --muted: #6b7084;
+            --accent: #d97706;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 20px;
+            font-size: 14px;
+            max-width: 720px;
+            margin: 0 auto;
+            line-height: 1.5;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header h1 {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        .theme-btn {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+            border-radius: 8px;
+            padding: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .theme-btn:hover { color: var(--text); border-color: var(--muted); }
+        .theme-btn svg { width: 16px; height: 16px; }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 14px;
+        }
+        .card-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--muted);
+            margin-bottom: 14px;
+        }
+
+        .status-banner {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .status-banner.connected { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.2); }
+        .status-banner.connecting { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); }
+        .status-banner.disconnected { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .status-banner.connected .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(34,197,94,0.2); }
+        .status-banner.connecting .dot { background: var(--yellow); box-shadow: 0 0 0 3px rgba(245,158,11,0.2); animation: pulse 1.5s infinite; }
+        .status-banner.disconnected .dot { background: var(--red); box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .status-text {
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .status-banner.connected .status-text { color: var(--green); }
+        .status-banner.connecting .status-text { color: var(--yellow); }
+        .status-banner.disconnected .status-text { color: var(--red); }
+
+        .status-time {
+            margin-left: auto;
+            font-size: 12px;
+            color: var(--muted);
+            font-family: var(--mono);
+        }
+
+        .auth-block {
+            background: rgba(245,158,11,0.08);
+            border: 1px solid rgba(245,158,11,0.2);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .auth-block p {
+            font-size: 13px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        .auth-block code {
+            display: block;
+            font-size: 12px;
+            color: var(--accent);
+            word-break: break-all;
+            font-family: var(--mono);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .info-item {
+            background: var(--surface2);
+            border-radius: 8px;
+            padding: 12px 14px;
+        }
+        .info-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: var(--muted);
+            margin-bottom: 4px;
+        }
+        .info-value {
+            font-size: 14px;
+            font-weight: 600;
+            font-family: var(--mono);
+            word-break: break-all;
+        }
+        .info-value.dim { color: var(--muted); font-weight: 400; }
+
+        .log-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .log-badge {
+            font-size: 11px;
+            color: var(--muted);
+            font-family: var(--mono);
+        }
+        .log-toggle {
+            font-size: 12px;
+            color: var(--accent);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        .log-toggle:hover { text-decoration: underline; }
+
+        .log-box {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            line-height: 1.7;
+            color: var(--muted);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-box .log-line { display: block; }
+        .log-box .log-line:hover { background: rgba(248,155,41,0.06); }
+        .log-line .ts { color: var(--muted); opacity: 0.6; }
+        .log-line .msg-info { color: var(--accent); }
+        .log-line .msg-warn { color: var(--yellow); }
+        .log-line .msg-err { color: var(--red); }
+        .log-line .msg-ok { color: var(--green); }
+
+        .refresh-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px;
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .config-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .config-input {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            padding: 8px 12px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+        .config-input:focus { border-color: var(--accent); }
+        .config-input::placeholder { color: var(--muted); }
+        .config-btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.15s;
+        }
+        .config-btn:hover { opacity: 0.85; }
+        .config-btn:disabled { opacity: 0.5; cursor: default; }
+        .config-msg {
+            font-size: 12px;
+            margin-top: 6px;
+            min-height: 16px;
+        }
+        .config-msg.ok { color: var(--green); }
+        .config-msg.err { color: var(--red); }
+
+        @media (max-width: 480px) {
+            body { padding: 14px; }
+            .info-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-left">
+        <svg width="26" height="26" viewBox="0 0 128 128" fill="none">
+            <rect width="128" height="128" rx="28" fill="#F89B29"/>
+            <circle cx="64" cy="64" r="30" fill="white"/>
+            <circle cx="64" cy="64" r="16" fill="#F89B29"/>
+            <circle cx="64" cy="28" r="10" fill="white"/>
+            <circle cx="64" cy="100" r="10" fill="white"/>
+            <circle cx="28" cy="64" r="10" fill="white"/>
+            <circle cx="100" cy="64" r="10" fill="white"/>
+        </svg>
+        <h1>ZeroTier VPN</h1>
+    </div>
+    <button class="theme-btn" id="themeToggle" aria-label="Toggle theme">
+        <svg id="iconSun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+        <svg id="iconMoon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+    </button>
+</div>
+
+<!-- Network Configuration -->
+<div class="card">
+    <div class="card-title">Network Configuration</div>
+    <div class="config-row">
+        <input class="config-input" id="nwid-input" type="text"
+               maxlength="16" placeholder="16-char Network ID (e.g. cf719fd540524be0)"
+               autocomplete="off" spellcheck="false" />
+        <button class="config-btn" id="nwid-save">Save</button>
+    </div>
+    <div class="config-msg" id="nwid-msg"></div>
+</div>
+
+<!-- Status -->
+<div id="status-banner" class="status-banner connecting">
+    <span class="dot"></span>
+    <span id="status-text" class="status-text">Checking...</span>
+    <span id="status-time" class="status-time"></span>
+</div>
+
+<!-- Auth prompt (shown when node needs authorization) -->
+<div id="auth-block" class="auth-block" style="display:none;">
+    <p>Authorize this device in <a href="https://my.zerotier.com" target="_blank"
+       style="color:var(--accent);">ZeroTier Central</a>:</p>
+    <p>Node ID: <code id="auth-node-id"></code></p>
+</div>
+
+<!-- Connection Info -->
+<div class="card" id="info-card" style="display:none;">
+    <div class="card-title">Connection Details</div>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">ZeroTier IP</div>
+            <div class="info-value" id="zt-ip">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Node ID</div>
+            <div class="info-value" id="zt-node">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">Network</div>
+            <div class="info-value" id="zt-network">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">SOCKS5 Proxy</div>
+            <div class="info-value" id="zt-socks">-</div>
+        </div>
+    </div>
+</div>
+
+<!-- Forwarded Ports -->
+<div class="card" id="ports-card" style="display:none;">
+    <div class="card-title">Forwarded Ports</div>
+    <div class="info-grid">
+        <div class="info-item">
+            <div class="info-label">HTTP</div>
+            <div class="info-value" id="port-http">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">HTTPS</div>
+            <div class="info-value" id="port-https">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">RTSP</div>
+            <div class="info-value" id="port-rtsp">-</div>
+        </div>
+        <div class="info-item">
+            <div class="info-label">SOCKS5</div>
+            <div class="info-value" id="port-socks">-</div>
+        </div>
+    </div>
+</div>
+
+<!-- Logs -->
+<div class="card">
+    <div class="log-controls">
+        <div class="card-title" style="margin-bottom:0;">Service Log</div>
+        <div style="display:flex;gap:10px;align-items:center;">
+            <span id="log-count" class="log-badge"></span>
+            <button class="log-toggle" id="log-scroll-btn">Scroll to bottom</button>
+        </div>
+    </div>
+    <div class="log-box" id="log-box">Loading logs...</div>
+</div>
+
+<div class="refresh-bar">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+    </svg>
+    <span>Auto-refresh every 5s</span>
+</div>
+
+<script>
+(function() {
+    var APP = 'ZeroTier_VPN';
+    var LOG_URL = '/axis-cgi/admin/systemlog.cgi?appname=' + APP;
+    var logBox = document.getElementById('log-box');
+    var autoScroll = true;
+
+    // Theme
+    var toggle = document.getElementById('themeToggle');
+    var sun = document.getElementById('iconSun');
+    var moon = document.getElementById('iconMoon');
+    var root = document.documentElement;
+
+    function applyTheme(t) {
+        if (t === 'light') {
+            root.setAttribute('data-theme', 'light');
+            sun.style.display = 'none';
+            moon.style.display = 'block';
+        } else {
+            root.removeAttribute('data-theme');
+            sun.style.display = 'block';
+            moon.style.display = 'none';
+        }
+    }
+    var stored = localStorage.getItem('zt-acap-theme');
+    if (stored) applyTheme(stored);
+    else if (window.matchMedia('(prefers-color-scheme: light)').matches) applyTheme('light');
+
+    toggle.addEventListener('click', function() {
+        var next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        localStorage.setItem('zt-acap-theme', next);
+        applyTheme(next);
+    });
+
+    // Log scroll
+    document.getElementById('log-scroll-btn').addEventListener('click', function() {
+        logBox.scrollTop = logBox.scrollHeight;
+        autoScroll = true;
+    });
+    logBox.addEventListener('scroll', function() {
+        autoScroll = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+    });
+
+    // Cache helpers
+    function cacheSet(k, v) { if (v) try { localStorage.setItem('zt-' + k, v); } catch(e){} }
+    function cacheGet(k) { try { return localStorage.getItem('zt-' + k); } catch(e){ return null; } }
+
+    function parse(txt) {
+        // Extract Node ID: "Node online, ID: XXXXXXXXXX"
+        var nodeMatches = txt.match(/Node online, ID:\s*([0-9a-fA-F]+)/g);
+        var nodeId = null;
+        if (nodeMatches) {
+            var nm = nodeMatches[nodeMatches.length - 1].match(/ID:\s*([0-9a-fA-F]+)/);
+            if (nm) nodeId = nm[1];
+        }
+
+        // Extract ZT IP: "Address assigned: X.X.X.X"
+        var ipMatches = txt.match(/Address assigned:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g);
+        var ztIP = null;
+        if (ipMatches) {
+            var im = ipMatches[ipMatches.length - 1].match(/Address assigned:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+            if (im) ztIP = im[1];
+        }
+
+        // Extract Network ID: "Joining network XXXXXXXXXXXXXXXX"
+        var netMatches = txt.match(/Joining network\s+([0-9a-fA-F]+)/g);
+        var networkId = null;
+        if (netMatches) {
+            var nwm = netMatches[netMatches.length - 1].match(/Joining network\s+([0-9a-fA-F]+)/);
+            if (nwm) networkId = nwm[1];
+        }
+
+        // Detect running state
+        var isRunning = /ZeroTier VPN is running/.test(txt);
+        var isWaitingAuth = /authorize this node/.test(txt) && !isRunning;
+        var isStarting = /zerotier-userspace start/i.test(txt) || /Waiting for ZeroTier/.test(txt);
+
+        // Cache found values
+        cacheSet('ip', ztIP); cacheSet('node', nodeId); cacheSet('network', networkId);
+        ztIP = ztIP || cacheGet('ip');
+        nodeId = nodeId || cacheGet('node');
+        networkId = networkId || cacheGet('network');
+
+        if (isRunning) return { state: 'connected', ip: ztIP, node: nodeId, network: networkId };
+        if (isWaitingAuth) return { state: 'connecting', ip: null, node: nodeId, network: networkId };
+        if (isStarting) return { state: 'connecting', ip: null, node: nodeId, network: networkId };
+        return { state: 'disconnected', ip: null, node: nodeId, network: networkId };
+    }
+
+    function classifyLine(msg) {
+        if (/error|fail|panic|fatal/i.test(msg)) return 'msg-err';
+        if (/warn|timeout|retry/i.test(msg)) return 'msg-warn';
+        if (/connected|running|assigned|online|ready/i.test(msg)) return 'msg-ok';
+        if (/starting|joining|waiting|reload/i.test(msg)) return 'msg-info';
+        return '';
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function renderLogs(txt) {
+        var lines = txt.split('\n').filter(function(l) { return l.trim(); });
+        document.getElementById('log-count').textContent = lines.length + ' lines';
+
+        var h = '';
+        for (var i = 0; i < lines.length; i++) {
+            var parts = lines[i].match(/^(\S+\s+\d+\s+[\d:]+)\s+(.*)/);
+            var cls = classifyLine(lines[i]);
+            if (parts) {
+                h += '<span class="log-line"><span class="ts">' + escHtml(parts[1]) + '</span> <span class="' + cls + '">' + escHtml(parts[2]) + '</span></span>\n';
+            } else {
+                h += '<span class="log-line"><span class="' + cls + '">' + escHtml(lines[i]) + '</span></span>\n';
+            }
+        }
+        logBox.innerHTML = h;
+        if (autoScroll) logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    function render(r) {
+        var banner = document.getElementById('status-banner');
+        var statusText = document.getElementById('status-text');
+        var auth = document.getElementById('auth-block');
+        var info = document.getElementById('info-card');
+        var ports = document.getElementById('ports-card');
+
+        banner.className = 'status-banner ' + r.state;
+        var labels = { connected: 'Connected', connecting: 'Connecting...', disconnected: 'Stopped' };
+        statusText.textContent = labels[r.state];
+
+        if (r.state === 'connecting' && r.node) {
+            document.getElementById('auth-node-id').textContent = r.node;
+            auth.style.display = '';
+        } else {
+            auth.style.display = 'none';
+        }
+
+        if (r.state === 'connected') {
+            document.getElementById('zt-ip').textContent = r.ip || '-';
+            document.getElementById('zt-ip').className = 'info-value' + (r.ip ? '' : ' dim');
+            document.getElementById('zt-node').textContent = r.node || '-';
+            document.getElementById('zt-node').className = 'info-value' + (r.node ? '' : ' dim');
+            document.getElementById('zt-network').textContent = r.network || '-';
+            document.getElementById('zt-network').className = 'info-value' + (r.network ? '' : ' dim');
+            document.getElementById('zt-socks').textContent = r.ip ? r.ip + ':1080' : '-';
+
+            info.style.display = '';
+            ports.style.display = '';
+
+            if (r.ip) {
+                document.getElementById('port-http').textContent = r.ip + ':80';
+                document.getElementById('port-https').textContent = r.ip + ':443';
+                document.getElementById('port-rtsp').textContent = r.ip + ':554';
+                document.getElementById('port-socks').textContent = r.ip + ':1080';
+            }
+        } else {
+            info.style.display = 'none';
+            ports.style.display = 'none';
+        }
+
+        var now = new Date();
+        document.getElementById('status-time').textContent =
+            ('0'+now.getHours()).slice(-2) + ':' +
+            ('0'+now.getMinutes()).slice(-2) + ':' +
+            ('0'+now.getSeconds()).slice(-2);
+    }
+
+    var APP_LIST_URL = '/axis-cgi/applications/list.cgi';
+
+    function checkAppRunning() {
+        return fetch(APP_LIST_URL, { cache: 'no-store', credentials: 'same-origin' })
+            .then(function(r) { return r.text(); })
+            .then(function(xml) {
+                var m = xml.match(new RegExp('Name="' + APP + '"[^/]*Status="([^"]+)"'));
+                return m && m[1] === 'Running';
+            })
+            .catch(function() { return false; });
+    }
+
+    function refresh() {
+        fetch(LOG_URL, { cache: 'no-store', credentials: 'same-origin' })
+            .then(function(r) { return r.text(); })
+            .then(function(txt) {
+                var result = parse(txt);
+                renderLogs(txt);
+                if (result.state !== 'disconnected') {
+                    render(result);
+                } else {
+                    checkAppRunning().then(function(running) {
+                        if (running) {
+                            result.state = 'connected';
+                            result.ip = result.ip || cacheGet('ip');
+                            result.node = result.node || cacheGet('node');
+                            result.network = result.network || cacheGet('network');
+                        }
+                        render(result);
+                    });
+                }
+            })
+            .catch(function() {
+                document.getElementById('status-text').textContent = 'Unable to fetch logs';
+            });
+    }
+
+    // Network ID config
+    var PARAM_URL = '/axis-cgi/param.cgi';
+    var nwidInput = document.getElementById('nwid-input');
+    var nwidSave  = document.getElementById('nwid-save');
+    var nwidMsg   = document.getElementById('nwid-msg');
+
+    function setMsg(txt, cls) {
+        nwidMsg.textContent = txt;
+        nwidMsg.className = 'config-msg ' + (cls || '');
+    }
+
+    // Load current value
+    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.NetworkID',
+          { cache: 'no-store', credentials: 'same-origin' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            var m = txt.match(/NetworkID=(.+)/);
+            if (m) nwidInput.value = m[1].trim();
+        })
+        .catch(function() {});
+
+    nwidSave.addEventListener('click', function() {
+        var val = nwidInput.value.trim();
+        if (!/^[0-9a-fA-F]{16}$/.test(val) && val !== '') {
+            setMsg('Must be a 16-character hex string, or leave empty to disconnect.', 'err');
+            return;
+        }
+        nwidSave.disabled = true;
+        setMsg('Saving…');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.NetworkID=' + encodeURIComponent(val)
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) {
+                setMsg('Saved — reconnecting…', 'ok');
+            } else {
+                setMsg('Error: ' + txt.trim(), 'err');
+            }
+        })
+        .catch(function(e) { setMsg('Request failed: ' + e, 'err'); })
+        .finally(function() { nwidSave.disabled = false; });
+    });
+
+    refresh();
+    setInterval(refresh, 5000);
+})();
+</script>
+
+</body>
+</html>
