@@ -229,17 +229,35 @@ static void *port_forwarder(void *arg) {
     if (slot >= 0)
         atomic_store(&g_srv_fds[slot], srv);
 
+    /* Allow rebind after reload without waiting for TIME_WAIT to expire */
+    int reuse = 1;
+    zts_bsd_setsockopt(srv, ZTS_SOL_SOCKET, ZTS_SO_REUSEADDR, &reuse, sizeof(reuse));
+
     struct zts_sockaddr_in zaddr;
     memset(&zaddr, 0, sizeof(zaddr));
     zaddr.sin_family = ZTS_AF_INET;
     zaddr.sin_port = htons((uint16_t)port);
     zts_inet_pton(ZTS_AF_INET, fctx->zt_addr, &zaddr.sin_addr);
 
-    if (zts_bsd_bind(srv, (struct zts_sockaddr *)&zaddr, sizeof(zaddr)) < 0) {
-        syslog(LOG_ERR, "proxy: bind port %d failed", port);
-        zts_bsd_close(srv);
-        free(fctx);
-        return NULL;
+    /* Retry bind — lwIP may not have fully finished setting up the
+       interface by the time zts_addr_is_assigned() returns true */
+    {
+        int bind_ok = 0;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            if (zts_bsd_bind(srv, (struct zts_sockaddr *)&zaddr, sizeof(zaddr)) == 0) {
+                bind_ok = 1;
+                break;
+            }
+            syslog(LOG_WARNING, "proxy: bind port %d failed (attempt %d/10), retrying...",
+                   port, attempt + 1);
+            zts_util_delay(1000);
+        }
+        if (!bind_ok) {
+            syslog(LOG_ERR, "proxy: bind port %d failed after 10 attempts", port);
+            zts_bsd_close(srv);
+            free(fctx);
+            return NULL;
+        }
     }
 
     if (zts_bsd_listen(srv, 16) < 0) {
@@ -427,16 +445,32 @@ static void *socks5_server(void *arg) {
     /* Register so reload can close us */
     atomic_store(&g_srv_fds[SOCKS5_SRV_IDX], srv);
 
+    /* Allow rebind after reload without waiting for TIME_WAIT to expire */
+    int reuse = 1;
+    zts_bsd_setsockopt(srv, ZTS_SOL_SOCKET, ZTS_SO_REUSEADDR, &reuse, sizeof(reuse));
+
     struct zts_sockaddr_in zaddr;
     memset(&zaddr, 0, sizeof(zaddr));
     zaddr.sin_family = ZTS_AF_INET;
     zaddr.sin_port = htons(SOCKS5_PORT);
     zts_inet_pton(ZTS_AF_INET, zt_addr, &zaddr.sin_addr);
 
-    if (zts_bsd_bind(srv, (struct zts_sockaddr *)&zaddr, sizeof(zaddr)) < 0) {
-        syslog(LOG_ERR, "socks5: bind failed");
-        zts_bsd_close(srv);
-        return NULL;
+    /* Retry bind — same timing race as the port forwarders */
+    {
+        int bind_ok = 0;
+        for (int attempt = 0; attempt < 10; attempt++) {
+            if (zts_bsd_bind(srv, (struct zts_sockaddr *)&zaddr, sizeof(zaddr)) == 0) {
+                bind_ok = 1;
+                break;
+            }
+            syslog(LOG_WARNING, "socks5: bind failed (attempt %d/10), retrying...", attempt + 1);
+            zts_util_delay(1000);
+        }
+        if (!bind_ok) {
+            syslog(LOG_ERR, "socks5: bind failed after 10 attempts");
+            zts_bsd_close(srv);
+            return NULL;
+        }
     }
     if (zts_bsd_listen(srv, 32) < 0) {
         syslog(LOG_ERR, "socks5: listen failed");
