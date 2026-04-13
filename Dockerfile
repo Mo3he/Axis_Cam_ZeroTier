@@ -13,9 +13,12 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 
 # Clone libzt (ZeroTier Sockets SDK — userspace networking, no TUN needed)
 ARG LIBZT_VERSION=1.8.10
+ARG ZT_CORE_VERSION=1.14.2
 RUN git clone --branch ${LIBZT_VERSION} \
     https://github.com/zerotier/libzt.git /tmp/libzt && \
-    cd /tmp/libzt && git submodule update --init --recursive
+    cd /tmp/libzt && git submodule update --init --recursive && \
+    cd ext/ZeroTierOne && git fetch --tags && git checkout ${ZT_CORE_VERSION} && cd /tmp/libzt && \
+    sed -i '/include_directories(\${ZTO_SRC_DIR}\/ext\/libnatpmp)/a include_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/core\/include)\ninclude_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/simpleapi\/include)' CMakeLists.txt
 
 # Write a cmake toolchain file for cross-compilation, then build libzt
 ARG ARCH
@@ -53,9 +56,9 @@ COPY ./app /opt/app/
 WORKDIR /opt/app
 
 # Patch the architecture and version placeholders in manifest.json
-ARG LIBZT_VERSION
+ARG ZT_CORE_VERSION
 RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json && \
-    sed -i "s/BUILDVER/${LIBZT_VERSION}/" manifest.json
+    sed -i "s/BUILDVER/${ZT_CORE_VERSION}/" manifest.json
 
 # Cross-compile the proxy binary (linked against static libzt) and place in lib/.
 # libzt is C++ internally so we link with the C++ compiler.
