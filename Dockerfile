@@ -13,12 +13,15 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 
 # Clone libzt (ZeroTier Sockets SDK — userspace networking, no TUN needed)
 ARG LIBZT_VERSION=1.8.10
-ARG ZT_CORE_VERSION=1.14.2
+ARG ZT_CORE_VERSION=1.16.0
 RUN git clone --branch ${LIBZT_VERSION} \
     https://github.com/zerotier/libzt.git /tmp/libzt && \
     cd /tmp/libzt && git submodule update --init --recursive && \
     cd ext/ZeroTierOne && git fetch --tags && git checkout ${ZT_CORE_VERSION} && cd /tmp/libzt && \
-    sed -i '/include_directories(\${ZTO_SRC_DIR}\/ext\/libnatpmp)/a include_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/core\/include)\ninclude_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/simpleapi\/include)' CMakeLists.txt
+    sed -i '/include_directories(\${ZTO_SRC_DIR}\/ext\/libnatpmp)/a include_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/core\/include)\ninclude_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/simpleapi\/include)' CMakeLists.txt && \
+    sed -i 's|_node = new Node(this, (void\*)0, \&cb, OSUtils::now());|ZT_Node_Config ztcfg = {}; _node = new Node(this, (void*)0, \&ztcfg, \&cb, OSUtils::now());|' src/NodeService.cpp && \
+    printf 'import sys\ns=open("src/Utilities.cpp").read()\ns=s.replace("#include <node/C25519.hpp>","#include <node/ECC.hpp>")\ns=s.replace("#include <node/World.hpp>\\n","")\nstart=s.find("int zts_util_sign_root_set(")\nbrace=s.index("{",start)\nd,i=0,brace\nwhile i<len(s):\n    if s[i]=="{":d+=1\n    elif s[i]=="}":d-=1\n    if d==0:break\n    i+=1\ns=s[:brace]+"{ return ZTS_ERR_GENERAL; }"+s[i+1:]\nopen("src/Utilities.cpp","w").write(s)\n' > /tmp/patch_utils.py && \
+    python3 /tmp/patch_utils.py
 
 # Write a cmake toolchain file for cross-compilation, then build libzt
 ARG ARCH
