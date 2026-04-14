@@ -85,6 +85,9 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
 # string. Repack the .eap with the corrected value after creation.
 RUN . /opt/axis/acapsdk/environment-setup* && create-package.sh && \
     EAP=$(ls *.eap) && \
+    MAJOR=$(echo ${ACAP_VERSION} | cut -d. -f1) && \
+    MINOR=$(echo ${ACAP_VERSION} | cut -d. -f2) && \
+    MICRO=$(echo ${ACAP_VERSION} | cut -d. -f3) && \
     mkdir -p /tmp/eapfix && tar -xzf "$EAP" -C /tmp/eapfix && \
     sed -i \
         -e 's/APPTYPE="native"/APPTYPE="armv7hf"/' \
@@ -92,6 +95,10 @@ RUN . /opt/axis/acapsdk/environment-setup* && create-package.sh && \
         -e 's/APPUSR="sdk"/APPUSR="root"/' \
         -e 's/APPGRP="sdk"/APPGRP="root"/' \
         -e 's/STARTMODE="never"/STARTMODE="respawn"/' \
+        -e "s/^APPMAJORVERSION=.*/APPMAJORVERSION=\"${MAJOR}\"/" \
+        -e "s/^APPMINORVERSION=.*/APPMINORVERSION=\"${MINOR}\"/" \
+        -e "s/^APPMICROVERSION=.*/APPMICROVERSION=\"${MICRO}\"/" \
+        -e 's/^REQEMBDEVVERSION=.*/REQEMBDEVVERSION="2.0"/' \
         /tmp/eapfix/package.conf && \
     tar -czf "$EAP" -C /tmp/eapfix . && \
     rm -rf /tmp/eapfix
