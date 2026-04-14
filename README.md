@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application.
 
-Current version: 1.16.1
+Current version: 1.16.2
 
 Download the pre-built `.eap` for your camera's architecture from the
 [latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
@@ -18,12 +18,34 @@ Adding a VPN client directly to the camera allows secure remote access without
 requiring any other equipment or network configuration. ZeroTier achieves this
 in a secure, simple, and lightweight way.
 
-Version 1.16.1 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
+Version 1.16.2 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
 Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
 - **No root required** — runs as the standard unprivileged `sdk` ACAP user
 - **Compatible with Axis OS 11 and 12** — OS 12 blocked root ACAP apps; this version works on both
 - **No kernel TUN device** — all networking is handled inside the process
+
+## What's new in v1.16.2
+
+### HTTP CONNECT proxy (port 8080)
+Routes outbound HTTP/HTTPS traffic from the camera through ZeroTier. Set
+`http://127.0.0.1:8080` wherever an HTTP or HTTPS proxy field is available.
+
+**System → Network → Global proxies** (general camera outbound traffic):
+- HTTP proxy: `http://127.0.0.1:8080`
+- HTTPS proxy: `http://127.0.0.1:8080`
+
+**System → MQTT → Broker** (built-in MQTT client):
+- HTTP proxy: `http://127.0.0.1:8080`
+- HTTPS proxy: `http://127.0.0.1:8080`
+
+### Outbound SOCKS5 proxy (localhost:1080)
+For ACAP apps or services that support SOCKS5, set their proxy to
+`127.0.0.1:1080`.
+
+### Web UI
+The **Connection Details** panel now shows the proxy addresses instead of the
+legacy per-port forward addresses.
 
 ## How it works
 
@@ -32,8 +54,13 @@ Once connected, the camera is reachable from the ZeroTier network via:
 - **Direct port forwarding** — ports 80 (HTTP), 443 (HTTPS), and 554 (RTSP) on
   the ZeroTier IP are transparently forwarded to the camera's local services.
   Point your browser or RTSP client directly at the ZeroTier IP.
-- **SOCKS5 proxy on port 1080** — configure any SOCKS5-aware client to use
-  `<zerotier-ip>:1080` for access to any camera port.
+- **Inbound SOCKS5 on `<zerotier-ip>:1080`** — configure any SOCKS5-aware
+  client to use `<zerotier-ip>:1080` for access to any camera port from the
+  ZeroTier network.
+- **Outbound HTTP CONNECT proxy on `127.0.0.1:8080`** — routes camera-initiated
+  HTTP/HTTPS traffic out through ZeroTier.
+- **Outbound SOCKS5 on `127.0.0.1:1080`** — routes camera-initiated TCP
+  connections out through ZeroTier for apps that support SOCKS5.
 
 ## Compatibility
 
@@ -55,10 +82,12 @@ and install via the camera's web interface under Apps → Add app.
 
 | Architecture               | File                              |
 |---------------------------|-----------------------------------|
-| aarch64 (most cameras 2019+) | `ZeroTier_VPN_1_16_1_aarch64.eap` |
-| armv7hf (older cameras)      | `ZeroTier_VPN_1_16_1_armv7hf.eap` |
+| aarch64 (most cameras 2019+) | `ZeroTier_VPN_1_16_2_aarch64.eap` |
+| armv7hf (older cameras)      | `ZeroTier_VPN_1_16_2_armv7hf.eap` |
 
 ## Configuration
+
+### Via the web UI
 
 1. Start the app.
 2. Go to the app's settings page (⋮ → Settings).
@@ -69,8 +98,35 @@ and install via the camera's web interface under Apps → Add app.
    [ZeroTier Central](https://my.zerotier.com), find the camera's Node ID in
    your network members, and check the "Auth" box.
 
-Once authorized, the camera will receive a ZeroTier IP address and the port
-forwarders will start automatically.
+### Via the Axis parameter API
+
+The Network ID can be set programmatically using the camera's `param.cgi` endpoint.
+
+**Read the current Network ID:**
+```
+curl --digest -u <username>:<password> \
+  "http://<device-ip>/axis-cgi/param.cgi?action=list&group=root.ZeroTier_VPN.NetworkID"
+```
+
+**Set a new Network ID:**
+```
+curl --digest -u <username>:<password> \
+  --data "action=update&root.ZeroTier_VPN.NetworkID=<16-char-hex-id>" \
+  "http://<device-ip>/axis-cgi/param.cgi"
+```
+
+**Clear the Network ID** (disconnects from ZeroTier):
+```
+curl --digest -u <username>:<password> \
+  --data "action=update&root.ZeroTier_VPN.NetworkID=" \
+  "http://<device-ip>/axis-cgi/param.cgi"
+```
+
+A successful response returns `OK`. The app detects the parameter change and
+reconnects automatically — no restart required.
+
+Once authorized, the camera will receive a ZeroTier IP address and all proxies
+and port forwarders will start automatically.
 
 When uninstalling the ACAP, all changes and files are removed from the camera.
 

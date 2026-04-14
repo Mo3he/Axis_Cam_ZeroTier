@@ -33,6 +33,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #define APP_NAME          "ZeroTier_VPN"
 #define DEFAULT_CONFIG    "/usr/local/packages/ZeroTier_VPN/config.txt"
@@ -46,6 +47,9 @@ static const int FORWARD_PORTS[] = { 80, 443, 554 };
 /* SOCKS5 proxy port on the ZeroTier interface */
 #define SOCKS5_PORT       1080
 
+/* HTTP CONNECT proxy on loopback — outbound camera traffic through ZeroTier */
+#define HTTP_CONNECT_PORT 8080
+
 /* Reload flag set by SIGUSR1 handler */
 static volatile sig_atomic_t reload_requested = 0;
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -54,12 +58,21 @@ static volatile sig_atomic_t shutdown_requested = 0;
 static atomic_int g_srv_fds[N_FORWARD_PORTS + 1]; /* +1 for SOCKS5 */
 #define SOCKS5_SRV_IDX N_FORWARD_PORTS
 
+/* POSIX loopback server sockets — closed on reload with regular close() */
+static atomic_int g_http_connect_srv = -1; /* 127.0.0.1:HTTP_CONNECT_PORT */
+static atomic_int g_local_socks5_srv = -1; /* 127.0.0.1:SOCKS5_PORT */
+
 static void close_server_sockets(void) {
     for (size_t i = 0; i < N_FORWARD_PORTS + 1; i++) {
         int fd = atomic_exchange(&g_srv_fds[i], -1);
         if (fd >= 0)
             zts_bsd_close(fd);
     }
+    int cfd;
+    cfd = atomic_exchange(&g_http_connect_srv, -1);
+    if (cfd >= 0) close(cfd);
+    cfd = atomic_exchange(&g_local_socks5_srv, -1);
+    if (cfd >= 0) close(cfd);
 }
 
 /* Current network ID (0 = not joined) */
@@ -507,6 +520,286 @@ static void *socks5_server(void *arg) {
     return NULL;
 }
 
+/* ── outbound proxies (loopback → ZeroTier) ──────────────────────── */
+
+/* Resolve host via system DNS and open a ZeroTier TCP connection.
+   Returns a zts fd on success, -1 on failure. */
+static int zt_connect_to(const char *host, int port) {
+    struct addrinfo hints, *res = NULL;
+    char portstr[8];
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    snprintf(portstr, sizeof(portstr), "%d", port);
+    if (getaddrinfo(host, portstr, &hints, &res) != 0 || !res)
+        return -1;
+
+    struct sockaddr_in *sa = (struct sockaddr_in *)res->ai_addr;
+    struct zts_sockaddr_in zaddr;
+    memset(&zaddr, 0, sizeof(zaddr));
+    zaddr.sin_family = ZTS_AF_INET;
+    zaddr.sin_port   = sa->sin_port;           /* already network byte order */
+    memcpy(&zaddr.sin_addr, &sa->sin_addr, 4); /* 4-byte IPv4 */
+    freeaddrinfo(res);
+
+    int zt_fd = zts_bsd_socket(ZTS_AF_INET, ZTS_SOCK_STREAM, 0);
+    if (zt_fd < 0)
+        return -1;
+
+    if (zts_bsd_connect(zt_fd, (struct zts_sockaddr *)&zaddr,
+                         sizeof(zaddr)) != 0) {
+        zts_bsd_close(zt_fd);
+        return -1;
+    }
+    return zt_fd;
+}
+
+/* Create a POSIX TCP server socket bound to 127.0.0.1:port. */
+static int make_local_server(int port) {
+    int srv = socket(AF_INET, SOCK_STREAM, 0);
+    if (srv < 0)
+        return -1;
+
+    int reuse = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons((uint16_t)port);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+        listen(srv, 32) < 0) {
+        close(srv);
+        return -1;
+    }
+    return srv;
+}
+
+/* Read HTTP request headers from a POSIX fd (one byte at a time) until the
+   blank line terminator \r\n\r\n is found or the buffer is full.
+   Returns byte count, or -1 on error. */
+static int read_http_headers(int fd, char *buf, int bufsize) {
+    int total = 0;
+    while (total < bufsize - 1) {
+        ssize_t n = read(fd, buf + total, 1);
+        if (n <= 0) { buf[total] = '\0'; return -1; }
+        total++;
+        if (total >= 4 && memcmp(buf + total - 4, "\r\n\r\n", 4) == 0)
+            break;
+    }
+    buf[total] = '\0';
+    return total;
+}
+
+/**
+ * Handle one HTTP CONNECT request from a local camera app.
+ * CONNECT <host>:<port> HTTP/x.x  →  ZeroTier connection  →  relay.
+ */
+static void *handle_http_connect(void *arg) {
+    int local_fd = (int)(intptr_t)arg;
+    char buf[4096];
+
+    if (read_http_headers(local_fd, buf, (int)sizeof(buf)) < 0)
+        goto fail_local;
+
+    /* First line: "CONNECT host:port HTTP/x.x" */
+    char method[16], hostport[512];
+    if (sscanf(buf, "%15s %511s", method, hostport) != 2 ||
+        strcasecmp(method, "CONNECT") != 0) {
+        write(local_fd, "HTTP/1.1 405 Method Not Allowed\r\n\r\n", 36);
+        goto fail_local;
+    }
+
+    /* Split "host:port" on the last colon */
+    char host[256] = {0};
+    int  port = 443;
+    char *colon = strrchr(hostport, ':');
+    if (colon && colon != hostport) {
+        int hlen = (int)(colon - hostport);
+        if (hlen >= (int)sizeof(host))
+            hlen = (int)sizeof(host) - 1;
+        memcpy(host, hostport, (size_t)hlen);
+        host[hlen] = '\0';
+        port = atoi(colon + 1);
+    } else {
+        snprintf(host, sizeof(host), "%s", hostport);
+    }
+    if (port <= 0 || port > 65535) {
+        write(local_fd, "HTTP/1.1 400 Bad Request\r\n\r\n", 28);
+        goto fail_local;
+    }
+
+    {
+        int zt_fd = zt_connect_to(host, port);
+        if (zt_fd < 0) {
+            write(local_fd, "HTTP/1.1 502 Bad Gateway\r\n\r\n", 28);
+            goto fail_local;
+        }
+        write(local_fd, "HTTP/1.1 200 Connection established\r\n\r\n", 39);
+        relay(zt_fd, local_fd);
+    }
+    return NULL;
+
+fail_local:
+    close(local_fd);
+    return NULL;
+}
+
+/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1:HTTP_CONNECT_PORT. */
+static void *http_connect_server(void *arg) {
+    (void)arg;
+
+    int srv = make_local_server(HTTP_CONNECT_PORT);
+    if (srv < 0) {
+        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1:%d",
+               HTTP_CONNECT_PORT);
+        return NULL;
+    }
+    atomic_store(&g_http_connect_srv, srv);
+    syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d",
+           HTTP_CONNECT_PORT);
+
+    while (!shutdown_requested) {
+        int client = accept(srv, NULL, NULL);
+        if (client < 0) {
+            if (shutdown_requested ||
+                atomic_load(&g_http_connect_srv) != srv)
+                break;
+            zts_util_delay(500);
+            continue;
+        }
+        pthread_t thr;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        if (pthread_create(&thr, &attr, handle_http_connect,
+                           (void *)(intptr_t)client) != 0)
+            close(client);
+        pthread_attr_destroy(&attr);
+    }
+    close(srv);
+    return NULL;
+}
+
+/**
+ * Handle one outbound SOCKS5 CONNECT from a local camera app (RFC 1928).
+ * Routes the connection through ZeroTier.
+ */
+static void *handle_local_socks5(void *arg) {
+    int local_fd = (int)(intptr_t)arg;
+    unsigned char buf[260];
+
+    /* Greeting */
+    if (read(local_fd, buf, 2) != 2 || buf[0] != 0x05) goto fail;
+    {
+        int nm = buf[1];
+        if (nm > 0 && read(local_fd, buf, (size_t)nm) != nm) goto fail;
+    }
+    { unsigned char rep[] = { 0x05, 0x00 }; write(local_fd, rep, 2); }
+
+    /* Request */
+    if (read(local_fd, buf, 4) != 4) goto fail;
+    if (buf[0] != 0x05 || buf[1] != 0x01) {
+        unsigned char err[] = { 0x05, 0x07, 0x00, 0x01, 0,0,0,0, 0,0 };
+        write(local_fd, err, sizeof(err));
+        goto fail;
+    }
+
+    {
+        char host[256] = {0};
+        int  port = 0;
+
+        switch (buf[3]) {
+        case 0x01: { /* IPv4 */
+            unsigned char raw[6];
+            if (read(local_fd, raw, 6) != 6) goto fail;
+            snprintf(host, sizeof(host), "%u.%u.%u.%u",
+                     raw[0], raw[1], raw[2], raw[3]);
+            port = ((int)raw[4] << 8) | raw[5];
+            break;
+        }
+        case 0x03: { /* Domain name */
+            unsigned char lenb;
+            if (read(local_fd, &lenb, 1) != 1) goto fail;
+            int nlen = lenb;
+            if (nlen >= (int)sizeof(host)) nlen = (int)sizeof(host) - 1;
+            unsigned char tmp[257];
+            if (read(local_fd, tmp, (size_t)(nlen + 2)) != nlen + 2) goto fail;
+            memcpy(host, tmp, (size_t)nlen);
+            host[nlen] = '\0';
+            port = ((int)tmp[nlen] << 8) | tmp[nlen + 1];
+            break;
+        }
+        default: {
+            unsigned char err[] = { 0x05, 0x08, 0x00, 0x01, 0,0,0,0, 0,0 };
+            write(local_fd, err, sizeof(err));
+            goto fail;
+        }
+        }
+
+        if (port <= 0 || port > 65535) goto fail;
+
+        int zt_fd = zt_connect_to(host, port);
+        if (zt_fd < 0) {
+            unsigned char err[] = { 0x05, 0x04, 0x00, 0x01, 0,0,0,0, 0,0 };
+            write(local_fd, err, sizeof(err));
+            goto fail;
+        }
+        {
+            unsigned char ok[] = {
+                0x05, 0x00, 0x00, 0x01,
+                127, 0, 0, 1,
+                (unsigned char)(port >> 8), (unsigned char)(port & 0xFF)
+            };
+            write(local_fd, ok, sizeof(ok));
+        }
+        relay(zt_fd, local_fd);
+    }
+    return NULL;
+
+fail:
+    close(local_fd);
+    return NULL;
+}
+
+/* Outbound SOCKS5 accept loop — binds on 127.0.0.1:SOCKS5_PORT. */
+static void *local_socks5_server(void *arg) {
+    (void)arg;
+
+    int srv = make_local_server(SOCKS5_PORT);
+    if (srv < 0) {
+        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1:%d",
+               SOCKS5_PORT);
+        return NULL;
+    }
+    atomic_store(&g_local_socks5_srv, srv);
+    syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d",
+           SOCKS5_PORT);
+
+    while (!shutdown_requested) {
+        int client = accept(srv, NULL, NULL);
+        if (client < 0) {
+            if (shutdown_requested ||
+                atomic_load(&g_local_socks5_srv) != srv)
+                break;
+            zts_util_delay(500);
+            continue;
+        }
+        pthread_t thr;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        if (pthread_create(&thr, &attr, handle_local_socks5,
+                           (void *)(intptr_t)client) != 0)
+            close(client);
+        pthread_attr_destroy(&attr);
+    }
+    close(srv);
+    return NULL;
+}
+
 /* ── signal handlers ─────────────────────────────────────────────── */
 
 static void sig_handler(int sig) {
@@ -662,9 +955,17 @@ int main(int argc, char *argv[]) {
         pthread_t socks5_thread;
         pthread_create(&socks5_thread, NULL, socks5_server, socks5_addr);
 
+        /* Start outbound proxies on loopback (camera apps → ZeroTier) */
+        pthread_t http_proxy_thread;
+        pthread_create(&http_proxy_thread, NULL, http_connect_server, NULL);
+        pthread_t local_socks5_thread;
+        pthread_create(&local_socks5_thread, NULL, local_socks5_server, NULL);
+
         syslog(LOG_INFO, "ZeroTier VPN is running — "
-               "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d",
-               zt_addr_str, zt_addr_str, SOCKS5_PORT);
+               "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d | "
+               "HTTP proxy: 127.0.0.1:%d | Outbound SOCKS5: 127.0.0.1:%d",
+               zt_addr_str, zt_addr_str, SOCKS5_PORT,
+               HTTP_CONNECT_PORT, SOCKS5_PORT);
 
         /* Snapshot current config mtime so the change-detection loop
            doesn't immediately fire on the write that brought us here */

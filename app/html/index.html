@@ -340,31 +340,31 @@
             <div class="info-value" id="zt-network">-</div>
         </div>
         <div class="info-item">
-            <div class="info-label">SOCKS5 Proxy</div>
+            <div class="info-label">Inbound SOCKS5</div>
             <div class="info-value" id="zt-socks">-</div>
         </div>
     </div>
 </div>
 
-<!-- Forwarded Ports -->
-<div class="card" id="ports-card" style="display:none;">
-    <div class="card-title">Forwarded Ports</div>
+<!-- Proxy Addresses -->
+<div class="card" id="proxy-card" style="display:none;">
+    <div class="card-title">Proxy Addresses</div>
     <div class="info-grid">
         <div class="info-item">
-            <div class="info-label">HTTP</div>
-            <div class="info-value" id="port-http">-</div>
+            <div class="info-label">HTTP Proxy</div>
+            <div class="info-value" style="font-size:12px;">http://127.0.0.1:8080</div>
         </div>
         <div class="info-item">
-            <div class="info-label">HTTPS</div>
-            <div class="info-value" id="port-https">-</div>
+            <div class="info-label">HTTPS Proxy</div>
+            <div class="info-value" style="font-size:12px;">http://127.0.0.1:8080</div>
         </div>
         <div class="info-item">
-            <div class="info-label">RTSP</div>
-            <div class="info-value" id="port-rtsp">-</div>
+            <div class="info-label">SOCKS5 (Outbound)</div>
+            <div class="info-value" style="font-size:12px;">127.0.0.1:1080</div>
         </div>
         <div class="info-item">
-            <div class="info-label">SOCKS5</div>
-            <div class="info-value" id="port-socks">-</div>
+            <div class="info-label">SOCKS5 (Inbound)</div>
+            <div class="info-value" id="proxy-socks-in">-</div>
         </div>
     </div>
 </div>
@@ -514,7 +514,7 @@
         var statusText = document.getElementById('status-text');
         var auth = document.getElementById('auth-block');
         var info = document.getElementById('info-card');
-        var ports = document.getElementById('ports-card');
+        var proxy = document.getElementById('proxy-card');
 
         banner.className = 'status-banner ' + r.state;
         var labels = { connected: 'Connected', connecting: 'Connecting...', disconnected: 'Stopped' };
@@ -535,19 +535,13 @@
             document.getElementById('zt-network').textContent = r.network || '-';
             document.getElementById('zt-network').className = 'info-value' + (r.network ? '' : ' dim');
             document.getElementById('zt-socks').textContent = r.ip ? r.ip + ':1080' : '-';
+            document.getElementById('proxy-socks-in').textContent = r.ip ? r.ip + ':1080' : '-';
 
             info.style.display = '';
-            ports.style.display = '';
-
-            if (r.ip) {
-                document.getElementById('port-http').textContent = r.ip + ':80';
-                document.getElementById('port-https').textContent = r.ip + ':443';
-                document.getElementById('port-rtsp').textContent = r.ip + ':554';
-                document.getElementById('port-socks').textContent = r.ip + ':1080';
-            }
+            proxy.style.display = '';
         } else {
             info.style.display = 'none';
-            ports.style.display = 'none';
+            proxy.style.display = 'none';
         }
 
         var now = new Date();
