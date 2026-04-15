@@ -9,7 +9,6 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 # Clone libzt (ZeroTier Sockets SDK — userspace networking, no TUN needed)
 ARG LIBZT_VERSION=1.8.10
 ARG ZT_CORE_VERSION=1.16.0
-ARG ACAP_VERSION=1.16.2
 RUN git clone --branch ${LIBZT_VERSION} \
     https://github.com/zerotier/libzt.git /tmp/libzt && \
     cd /tmp/libzt && git submodule update --init --recursive && \
@@ -58,7 +57,7 @@ WORKDIR /opt/app
 RUN cp html/index.html index.html
 
 # Patch the version placeholder in package.conf (ACAP3 uses major.minor.patch)
-ARG ACAP_VERSION
+ARG ACAP_VERSION=1.16.3
 RUN sed -i "s/VERSION=BUILDVER/VERSION=${ACAP_VERSION}/" package.conf
 
 # Build the main ACAP binary (config_bridge.c)

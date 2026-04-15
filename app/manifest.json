@@ -22,6 +22,11 @@
                     "name": "NetworkID",
                     "default": "",
                     "type": "string"
+                },
+                {
+                    "name": "PlanetFile",
+                    "default": "",
+                    "type": "string"
                 }
             ]
         }

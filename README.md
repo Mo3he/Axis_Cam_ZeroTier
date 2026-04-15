@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application.
 
-Current version: 1.16.2
+Current version: 1.16.3
 
 Download the pre-built `.eap` for your camera's architecture from the
 [latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
@@ -18,7 +18,7 @@ Adding a VPN client directly to the camera allows secure remote access without
 requiring any other equipment or network configuration. ZeroTier achieves this
 in a secure, simple, and lightweight way.
 
-Version 1.16.2 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
+Version 1.16.3 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
 Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
 - **No root required** — runs as the standard unprivileged `sdk` ACAP user (ACAP 4 builds)
@@ -29,9 +29,9 @@ Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, whi
 
 | Build | Axis OS | Architecture | File |
 |---|---|---|---|
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_2_aarch64.eap` |
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_2_armv7hf.eap` |
-| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_2_armv7hf_acap3.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_3_aarch64.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_3_armv7hf.eap` |
+| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_3_armv7hf_acap3.eap` |
 
 The ACAP 3 build targets cameras with `EmbeddedDevelopment.Version=2.x` (e.g. M1065-LW, M4206-V).
 Cameras on Axis OS 6.x or earlier (EmbeddedDevelopment 1.x) are not supported.
@@ -107,6 +107,44 @@ Once connected, the camera is reachable from the ZeroTier network via:
   HTTP/HTTPS traffic out through ZeroTier.
 - **Outbound SOCKS5 on `127.0.0.1:1080`** — routes camera-initiated TCP
   connections out through ZeroTier for apps that support SOCKS5.
+
+## What's new in v1.16.3
+
+### Custom planet file support *(beta)*
+Allows connecting to a **self-hosted ZeroTier controller** by uploading a custom planet file through the web UI.
+
+> **Beta notice:** This feature is functional but has had limited real-world testing against self-hosted controllers. Please report any issues.
+
+**Via the web UI:**
+1. Go to the app's settings page (⋮ → Settings).
+2. In the **Custom Planet (Self-Hosted Controller)** card, click **Choose File** and select your custom `planet` binary.
+3. Click **Upload**. The proxy restarts automatically with the new planet.
+4. To revert to the default ZeroTier planet, click **Reset**.
+
+**Via the parameter API:**
+
+The planet file must be uploaded as a base64-encoded string:
+
+```bash
+# Encode your planet file
+B64=$(base64 -i /path/to/planet)
+
+# Upload to the camera
+curl --digest -u <username>:<password> \
+  --data "action=update&root.ZeroTier_VPN.PlanetFile=${B64}" \
+  "http://<device-ip>/axis-cgi/param.cgi"
+```
+
+**Clear the custom planet** (reverts to default ZeroTier planet):
+```bash
+curl --digest -u <username>:<password> \
+  --data "action=update&root.ZeroTier_VPN.PlanetFile=" \
+  "http://<device-ip>/axis-cgi/param.cgi"
+```
+
+A planet change triggers a full proxy restart (unlike a Network ID change which only reloads the network config).
+
+---
 
 ## What's new in v1.16.2
 

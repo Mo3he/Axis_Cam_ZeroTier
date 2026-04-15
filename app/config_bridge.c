@@ -23,6 +23,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
@@ -30,8 +31,64 @@
 #define APP_NAME        "ZeroTier_VPN"
 #define CONFIG_FILE     "/usr/local/packages/ZeroTier_VPN/config.txt"
 #define ZT_BINARY       "/usr/local/packages/ZeroTier_VPN/lib/zerotier-userspace"
+#define PLANET_FILE     "/usr/local/packages/ZeroTier_VPN/localdata/planet"
 
 static pid_t zt_pid = -1;
+
+/* ── base64 decoder ─────────────────────────────────────────────── */
+
+static const signed char b64_table[256] = {
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-2,-2,-2,-2,-2,-1,-1, /* whitespace = -2 */
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -2,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63, /* '+' '/' */
+    52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-3,-1,-1, /* '0'-'9', '=' = -3 */
+    -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+    15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+    -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+    41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+    -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+};
+
+/**
+ * Decode base64 string into a freshly malloc'd buffer.
+ * Returns the decoded byte count, or -1 on error.
+ * Caller must free() the returned buffer.
+ */
+static ssize_t base64_decode(const char *src, unsigned char **out) {
+    size_t src_len = strlen(src);
+    /* max decoded size */
+    size_t out_max = (src_len / 4) * 3 + 3;
+    unsigned char *buf = malloc(out_max);
+    if (!buf) return -1;
+
+    size_t out_pos = 0;
+    uint32_t accum = 0;
+    int bits = 0;
+
+    for (size_t i = 0; i < src_len; i++) {
+        signed char v = b64_table[(unsigned char)src[i]];
+        if (v == -2) continue;          /* skip whitespace */
+        if (v == -3) break;             /* padding '=' */
+        if (v < 0)  { free(buf); return -1; }  /* invalid char */
+
+        accum = (accum << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            buf[out_pos++] = (unsigned char)((accum >> bits) & 0xFF);
+        }
+    }
+
+    *out = buf;
+    return (ssize_t)out_pos;
+}
 
 /* ── child process management ────────────────────────────────────── */
 
@@ -90,6 +147,96 @@ static gboolean watchdog_cb(gpointer G_GNUC_UNUSED data) {
 
 /* ── config file ─────────────────────────────────────────────────── */
 
+/**
+ * Write the custom planet file to STATE_DIR/planet from the base64-encoded
+ * PlanetFile parameter.  If the parameter is empty, remove any existing
+ * custom planet file so ZeroTier falls back to its built-in defaults.
+ * Returns true if the on-disk planet file was actually changed.
+ */
+static bool update_planet_file(AXParameter *handle) {
+    GError *error = NULL;
+    gchar *b64 = NULL;
+
+    if (!ax_parameter_get(handle, "PlanetFile", &b64, &error)) {
+        if (error) { g_error_free(error); error = NULL; }
+        b64 = g_strdup("");
+    }
+
+    /* Strip surrounding whitespace */
+    gchar *trimmed = g_strstrip(b64);
+
+    if (trimmed[0] == '\0') {
+        /* Empty parameter — remove custom planet so the default is used */
+        bool changed = (access(PLANET_FILE, F_OK) == 0);
+        if (changed) {
+            if (remove(PLANET_FILE) != 0)
+                syslog(LOG_WARNING, "could not remove planet file: %s", strerror(errno));
+            else
+                syslog(LOG_INFO, "custom planet file removed — using built-in planet");
+        }
+        g_free(b64);
+        return changed;
+    }
+
+    unsigned char *decoded = NULL;
+    ssize_t decoded_len = base64_decode(trimmed, &decoded);
+    g_free(b64);
+
+    if (decoded_len < 0) {
+        syslog(LOG_ERR, "PlanetFile: base64 decode failed");
+        return false;
+    }
+    if (decoded_len < 4) {
+        syslog(LOG_ERR, "PlanetFile: decoded data too short (%zd bytes)", decoded_len);
+        free(decoded);
+        return false;
+    }
+
+    /* Compare with existing file to avoid needless restarts */
+    bool changed = true;
+    FILE *existing = fopen(PLANET_FILE, "rb");
+    if (existing) {
+        fseek(existing, 0, SEEK_END);
+        long existing_len = ftell(existing);
+        if (existing_len == decoded_len) {
+            rewind(existing);
+            unsigned char *existing_buf = malloc((size_t)existing_len);
+            if (existing_buf &&
+                fread(existing_buf, 1, (size_t)existing_len, existing) == (size_t)existing_len &&
+                memcmp(existing_buf, decoded, (size_t)decoded_len) == 0) {
+                changed = false;
+            }
+            free(existing_buf);
+        }
+        fclose(existing);
+    }
+
+    if (changed) {
+        /* Ensure the localdata directory exists */
+        char dir[256];
+        snprintf(dir, sizeof(dir), "%s", PLANET_FILE);
+        char *slash = strrchr(dir, '/');
+        if (slash) {
+            *slash = '\0';
+            mkdir(dir, 0755);
+        }
+
+        FILE *f = fopen(PLANET_FILE, "wb");
+        if (f) {
+            fwrite(decoded, 1, (size_t)decoded_len, f);
+            fclose(f);
+            chmod(PLANET_FILE, 0600);
+            syslog(LOG_INFO, "custom planet file written (%zd bytes)", decoded_len);
+        } else {
+            syslog(LOG_ERR, "cannot write planet file: %s", strerror(errno));
+            changed = false;
+        }
+    }
+
+    free(decoded);
+    return changed;
+}
+
 static void update_config_file(AXParameter *handle) {
     GError *error = NULL;
     gchar *network_id = NULL;
@@ -115,7 +262,7 @@ static void update_config_file(AXParameter *handle) {
 
 /* ── ACAP parameter callback ─────────────────────────────────────── */
 
-static void parameter_changed(const gchar *name, const gchar *value,
+static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *value,
                                gpointer handle_void_ptr) {
     AXParameter *handle = handle_void_ptr;
 
@@ -125,10 +272,24 @@ static void parameter_changed(const gchar *name, const gchar *value,
     if (strncmp(name, prefix, strlen(prefix)) == 0)
         short_name = name + strlen(prefix);
 
-    syslog(LOG_INFO, "parameter changed: %s = %s", short_name, value);
+    syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    update_config_file(handle);
-    reload_proxy();
+    if (strcmp(short_name, "PlanetFile") == 0) {
+        /*
+         * The planet file is read by ZeroTier at node startup — a simple
+         * SIGUSR1 reload is not enough; the proxy must be fully restarted.
+         */
+        bool changed = update_planet_file(handle);
+        update_config_file(handle);
+        if (changed) {
+            syslog(LOG_INFO, "planet file changed — doing full proxy restart");
+            stop_proxy();
+            start_proxy();
+        }
+    } else {
+        update_config_file(handle);
+        reload_proxy();
+    }
 }
 
 /* ── signal handler ──────────────────────────────────────────────── */
@@ -156,11 +317,12 @@ int main(void) {
         return 1;
     }
 
+    update_planet_file(handle);
     update_config_file(handle);
     start_proxy();
 
     /* Register callbacks for every parameter */
-    const char *params[] = { "NetworkID" };
+    const char *params[] = { "NetworkID", "PlanetFile" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
                                             parameter_changed, handle, &error)) {

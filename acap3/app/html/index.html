@@ -269,6 +269,40 @@
         .config-msg.ok { color: var(--green); }
         .config-msg.err { color: var(--red); }
 
+        .file-label {
+            display: inline-block;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--muted);
+            font-size: 13px;
+            padding: 8px 12px;
+            cursor: pointer;
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: border-color 0.15s;
+        }
+        .file-label:hover { border-color: var(--muted); color: var(--text); }
+        .file-input-hidden { display: none; }
+        .planet-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 8px;
+        }
+        .planet-status .dot-sm {
+            width: 7px; height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            background: var(--muted);
+        }
+        .planet-status.custom .dot-sm { background: var(--accent); }
+        .planet-status.default .dot-sm { background: var(--green); }
+
         @media (max-width: 480px) {
             body { padding: 14px; }
             .info-grid { grid-template-columns: 1fr; }
@@ -307,6 +341,21 @@
         <button class="config-btn" id="nwid-save">Save</button>
     </div>
     <div class="config-msg" id="nwid-msg"></div>
+</div>
+
+<!-- Planet File -->
+<div class="card">
+    <div class="card-title">Custom Planet (Self-Hosted Controller)</div>
+    <div class="config-row">
+        <label class="file-label" id="planet-label" for="planet-input">Choose planet file…</label>
+        <input class="file-input-hidden" type="file" id="planet-input" accept="*/*" />
+        <button class="config-btn" id="planet-save" disabled>Upload</button>
+        <button class="config-btn" id="planet-clear" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);">Reset</button>
+    </div>
+    <div class="planet-status" id="planet-status">
+        <span class="dot-sm"></span><span id="planet-status-text">Loading…</span>
+    </div>
+    <div class="config-msg" id="planet-msg"></div>
 </div>
 
 <!-- Status -->
@@ -627,6 +676,122 @@
         })
         .catch(function(e) { setMsg('Request failed: ' + e, 'err'); })
         .finally(function() { nwidSave.disabled = false; });
+    });
+
+    // Planet file
+    var planetInput  = document.getElementById('planet-input');
+    var planetLabel  = document.getElementById('planet-label');
+    var planetSave   = document.getElementById('planet-save');
+    var planetClear  = document.getElementById('planet-clear');
+    var planetMsg    = document.getElementById('planet-msg');
+    var planetStatus = document.getElementById('planet-status');
+    var planetStatusText = document.getElementById('planet-status-text');
+
+    function setPlanetMsg(txt, cls) {
+        planetMsg.textContent = txt;
+        planetMsg.className = 'config-msg ' + (cls || '');
+    }
+
+    function setPlanetStatus(hasCustom) {
+        if (hasCustom) {
+            planetStatus.className = 'planet-status custom';
+            planetStatusText.textContent = 'Custom planet active — connecting to self-hosted controller';
+        } else {
+            planetStatus.className = 'planet-status default';
+            planetStatusText.textContent = 'Using built-in ZeroTier planet (zerotier.com)';
+        }
+    }
+
+    // Load current planet state
+    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.PlanetFile',
+          { cache: 'no-store', credentials: 'same-origin' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            var m = txt.match(/PlanetFile=(.*)/);
+            var hasCustom = m && m[1].trim().length > 0;
+            setPlanetStatus(hasCustom);
+        })
+        .catch(function() { setPlanetStatus(false); });
+
+    var selectedPlanetBytes = null;
+
+    planetInput.addEventListener('change', function() {
+        var file = planetInput.files[0];
+        if (!file) return;
+        planetLabel.textContent = file.name + ' (' + file.size + ' B)';
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            selectedPlanetBytes = e.target.result;
+            planetSave.disabled = false;
+            setPlanetMsg('');
+        };
+        reader.onerror = function() {
+            setPlanetMsg('Could not read file.', 'err');
+            selectedPlanetBytes = null;
+            planetSave.disabled = true;
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function arrayBufferToBase64(buf) {
+        var bytes = new Uint8Array(buf);
+        var binary = '';
+        for (var i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return btoa(binary);
+    }
+
+    planetSave.addEventListener('click', function() {
+        if (!selectedPlanetBytes) return;
+        var b64 = arrayBufferToBase64(selectedPlanetBytes);
+        planetSave.disabled = true;
+        setPlanetMsg('Uploading…');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.PlanetFile=' + encodeURIComponent(b64)
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) {
+                setPlanetMsg('Planet file saved — proxy restarting…', 'ok');
+                setPlanetStatus(true);
+                selectedPlanetBytes = null;
+                planetLabel.textContent = 'Choose planet file…';
+            } else {
+                setPlanetMsg('Error: ' + txt.trim(), 'err');
+                planetSave.disabled = false;
+            }
+        })
+        .catch(function(e) {
+            setPlanetMsg('Request failed: ' + e, 'err');
+            planetSave.disabled = false;
+        });
+    });
+
+    planetClear.addEventListener('click', function() {
+        if (!confirm('Reset to the default ZeroTier public planet?')) return;
+        planetClear.disabled = true;
+        setPlanetMsg('Resetting…');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.PlanetFile='
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) {
+                setPlanetMsg('Reset to built-in planet — proxy restarting…', 'ok');
+                setPlanetStatus(false);
+            } else {
+                setPlanetMsg('Error: ' + txt.trim(), 'err');
+            }
+        })
+        .catch(function(e) { setPlanetMsg('Request failed: ' + e, 'err'); })
+        .finally(function() { planetClear.disabled = false; });
     });
 
     refresh();

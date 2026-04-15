@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="1.16.2"
+VERSION="1.16.3"
 
 echo "==> Building ACAP 3 armv7hf (for AXIS OS 9.x / 10.x cameras)..."
 docker build --build-arg ACAP_VERSION="${VERSION}" --tag "zerotier-vpn-acap3-armv7hf" "$REPO_ROOT"
