@@ -11,7 +11,7 @@
             --border: #262a35;
             --text: #e4e6ed;
             --muted: #8b8fa3;
-            --accent: #f89b29;
+            --accent: #f4b56a;
             --green: #22c55e;
             --yellow: #f59e0b;
             --red: #ef4444;
@@ -26,7 +26,7 @@
             --border: #e0e3e8;
             --text: #1a1a2e;
             --muted: #6b7084;
-            --accent: #d97706;
+            --accent: #c8813a;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -211,7 +211,7 @@
             word-break: break-all;
         }
         .log-box .log-line { display: block; }
-        .log-box .log-line:hover { background: rgba(248,155,41,0.06); }
+        .log-box .log-line:hover { background: rgba(244,181,106,0.06); }
         .log-line .ts { color: var(--muted); opacity: 0.6; }
         .log-line .msg-info { color: var(--accent); }
         .log-line .msg-warn { color: var(--yellow); }
@@ -303,6 +303,35 @@
         .planet-status.custom .dot-sm { background: var(--accent); }
         .planet-status.default .dot-sm { background: var(--green); }
 
+        /* Update banner */
+        .update-banner {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 14px;
+            background: rgba(244,181,106,0.1);
+            border: 1px solid rgba(244,181,106,0.2);
+        }
+        .update-banner.visible { display: flex; }
+        .update-banner .update-text { flex: 1; font-size: 13px; color: var(--text); }
+        .update-banner .update-text strong { color: var(--accent); }
+        .update-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: var(--accent);
+            color: #fff;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 12px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+        .update-btn:hover { opacity: 0.9; }
+
         @media (max-width: 480px) {
             body { padding: 14px; }
             .info-grid { grid-template-columns: 1fr; }
@@ -343,6 +372,35 @@
     <div class="config-msg" id="nwid-msg"></div>
 </div>
 
+<!-- Proxy Port Settings -->
+<div class="card">
+    <div class="card-title">Proxy Port Settings</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+        Set the loopback ports this app listens on. Change these if another app
+        is already using the defaults (8080 / 1080). The proxy will restart when
+        you save.
+    </div>
+    <div class="info-grid" style="margin-bottom:12px;">
+        <div>
+            <div class="info-label" style="margin-bottom:4px;">HTTP / HTTPS Proxy Port</div>
+            <div class="config-row">
+                <input class="config-input" id="http-port-input" type="number"
+                       min="1" max="65535" placeholder="8080" style="max-width:120px;" />
+                <button class="config-btn" id="http-port-save">Save</button>
+            </div>
+        </div>
+        <div>
+            <div class="info-label" style="margin-bottom:4px;">Outbound SOCKS5 Port</div>
+            <div class="config-row">
+                <input class="config-input" id="socks5-port-input" type="number"
+                       min="1" max="65535" placeholder="1080" style="max-width:120px;" />
+                <button class="config-btn" id="socks5-port-save">Save</button>
+            </div>
+        </div>
+    </div>
+    <div class="config-msg" id="port-msg"></div>
+</div>
+
 <!-- Planet File -->
 <div class="card">
     <div class="card-title">Custom Planet (Self-Hosted Controller)</div>
@@ -363,6 +421,15 @@
     <span class="dot"></span>
     <span id="status-text" class="status-text">Checking...</span>
     <span id="status-time" class="status-time"></span>
+</div>
+
+<!-- Update available -->
+<div id="update-banner" class="update-banner">
+    <div class="update-text">Update available: <strong id="update-version"></strong></div>
+    <a id="update-link" class="update-btn" href="https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest" target="_blank" rel="noopener">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+    </a>
 </div>
 
 <!-- Auth prompt (shown when node needs authorization) -->
@@ -437,6 +504,8 @@
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
     </svg>
     <span>Auto-refresh every 5s</span>
+    <span style="opacity:0.4;">·</span>
+    <button class="log-toggle" id="check-update-btn">Check for Updates</button>
 </div>
 
 <script>
@@ -819,8 +888,104 @@
         .finally(function() { planetClear.disabled = false; });
     });
 
+    // Proxy port settings
+    var httpPortInput  = document.getElementById('http-port-input');
+    var httpPortSave   = document.getElementById('http-port-save');
+    var socks5PortInput = document.getElementById('socks5-port-input');
+    var socks5PortSave  = document.getElementById('socks5-port-save');
+    var portMsg        = document.getElementById('port-msg');
+
+    function setPortMsg(txt, cls) {
+        portMsg.textContent = txt;
+        portMsg.className = 'config-msg ' + (cls || '');
+    }
+
+    function savePort(paramName, value, btnEl) {
+        var p = parseInt(value, 10);
+        if (!p || p < 1 || p > 65535) {
+            setPortMsg('Port must be a number between 1 and 65535.', 'err');
+            return;
+        }
+        btnEl.disabled = true;
+        setPortMsg('Saving…');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.' + paramName + '=' + encodeURIComponent(String(p))
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) {
+                setPortMsg('Saved — proxy restarting…', 'ok');
+            } else {
+                setPortMsg('Error: ' + txt.trim(), 'err');
+            }
+        })
+        .catch(function(e) { setPortMsg('Request failed: ' + e, 'err'); })
+        .finally(function() { btnEl.disabled = false; });
+    }
+
+    // Load current port values
+    fetch(PARAM_URL + '?action=list&group=root.' + APP,
+          { cache: 'no-store', credentials: 'same-origin' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            var hm = txt.match(/HTTPProxyPort=([^\r\n]+)/);
+            if (hm) httpPortInput.value = hm[1].trim();
+            var sm = txt.match(/SOCKS5ProxyPort=([^\r\n]+)/);
+            if (sm) socks5PortInput.value = sm[1].trim();
+        })
+        .catch(function() {});
+
+    httpPortSave.addEventListener('click', function() {
+        savePort('HTTPProxyPort', httpPortInput.value, httpPortSave);
+    });
+    socks5PortSave.addEventListener('click', function() {
+        savePort('SOCKS5ProxyPort', socks5PortInput.value, socks5PortSave);
+    });
+
+    // Check for updates from GitHub
+    function checkForUpdate(manual) {
+        var btn = document.getElementById('check-update-btn');
+        if (manual && btn) btn.textContent = 'Checking...';
+        fetch('https://api.github.com/repos/Mo3he/Axis_Cam_ZeroTier/releases/latest')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var tag = (data.tag_name || '').replace(/^v/, '');
+                if (!tag) return;
+                if (compareVersions(tag, '1.16.6') > 0) {
+                    document.getElementById('update-version').textContent = 'v' + tag;
+                    document.getElementById('update-banner').classList.add('visible');
+                    if (btn) btn.textContent = 'Update Available';
+                } else {
+                    if (manual && btn) btn.textContent = 'Up to date';
+                    setTimeout(function() { if (btn) btn.textContent = 'Check for Updates'; }, 3000);
+                }
+            })
+            .catch(function() {
+                if (manual && btn) btn.textContent = 'Check failed';
+                setTimeout(function() { if (btn) btn.textContent = 'Check for Updates'; }, 3000);
+            });
+    }
+
+    document.getElementById('check-update-btn').addEventListener('click', function() {
+        checkForUpdate(true);
+    });
+
+    function compareVersions(a, b) {
+        var pa = a.split('.').map(Number);
+        var pb = b.split('.').map(Number);
+        for (var i = 0; i < 3; i++) {
+            if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+            if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+        }
+        return 0;
+    }
+
     refresh();
     setInterval(refresh, 5000);
+    checkForUpdate(false);
 })();
 </script>
 

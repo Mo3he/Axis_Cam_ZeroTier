@@ -27,6 +27,16 @@
                     "name": "PlanetFile",
                     "default": "",
                     "type": "string"
+                },
+                {
+                    "name": "HTTPProxyPort",
+                    "default": "8080",
+                    "type": "string"
+                },
+                {
+                    "name": "SOCKS5ProxyPort",
+                    "default": "1080",
+                    "type": "string"
                 }
             ]
         }

@@ -45,12 +45,11 @@ static const int FORWARD_PORTS[] = { 80, 443, 554 };
 #define N_FORWARD_PORTS   (sizeof(FORWARD_PORTS) / sizeof(FORWARD_PORTS[0]))
 
 /* SOCKS5 proxy port on the ZeroTier interface (bound to ZT IP, not loopback) */
-#define SOCKS5_PORT       1080
+#define SOCKS5_PORT        1080
 
-/* Preferred loopback proxy ports — tried in order; next port used if busy.
- * (Other VPN ACAPs installed on the same camera may already hold port 8080/1080.) */
-static const int HTTP_CONNECT_PORTS[] = { 8080, 8181, 8282, 8383 };
-static const int LOCAL_SOCKS5_PORTS[] = { 1080, 1081, 1082, 1083 };
+/* Default loopback proxy ports — overridden by config file values */
+#define DEFAULT_HTTP_PORT   8080
+#define DEFAULT_SOCKS5_PORT 1080
 
 /* Reload flag set by SIGUSR1 handler */
 static volatile sig_atomic_t reload_requested = 0;
@@ -86,7 +85,9 @@ static uint64_t current_nwid = 0;
 /* ── config ──────────────────────────────────────────────────────── */
 
 typedef struct {
-    char network_id[20];   /* 16-hex-char network ID */
+    char network_id[20];    /* 16-hex-char network ID */
+    int  http_proxy_port;   /* loopback HTTP CONNECT proxy port */
+    int  socks5_proxy_port; /* loopback outbound SOCKS5 port */
 } config_t;
 
 static bool load_config(const char *path, config_t *cfg) {
@@ -95,6 +96,8 @@ static bool load_config(const char *path, config_t *cfg) {
         return false;
 
     memset(cfg, 0, sizeof(*cfg));
+    cfg->http_proxy_port   = DEFAULT_HTTP_PORT;
+    cfg->socks5_proxy_port = DEFAULT_SOCKS5_PORT;
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         /* strip newline */
@@ -121,6 +124,12 @@ static bool load_config(const char *path, config_t *cfg) {
 
         if (strcmp(key, "network_id") == 0) {
             snprintf(cfg->network_id, sizeof(cfg->network_id), "%s", val);
+        } else if (strcmp(key, "http_proxy_port") == 0) {
+            int p = atoi(val);
+            if (p > 0 && p <= 65535) cfg->http_proxy_port = p;
+        } else if (strcmp(key, "socks5_proxy_port") == 0) {
+            int p = atoi(val);
+            if (p > 0 && p <= 65535) cfg->socks5_proxy_port = p;
         }
     }
     fclose(f);
@@ -582,23 +591,6 @@ static int make_local_server(int port) {
     return srv;
 }
 
-/* Try each candidate port in turn; bind 127.0.0.1 to the first one that
-   succeeds.  Sets *actual_port to the port that was bound.
-   Returns the server fd, or -1 if every candidate is in use. */
-static int make_local_server_any_port(const int *ports, int n, int *actual_port) {
-    for (int i = 0; i < n; i++) {
-        int fd = make_local_server(ports[i]);
-        if (fd >= 0) {
-            if (actual_port) *actual_port = ports[i];
-            return fd;
-        }
-        if (i + 1 < n)
-            syslog(LOG_WARNING, "port %d already in use, trying %d...",
-                   ports[i], ports[i + 1]);
-    }
-    return -1;
-}
-
 /* Read HTTP request headers from a POSIX fd (one byte at a time) until the
    blank line terminator \r\n\r\n is found or the buffer is full.
    Returns byte count, or -1 on error. */
@@ -669,22 +661,19 @@ fail_local:
     return NULL;
 }
 
-/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1, trying candidate ports. */
+/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1 on the configured port. */
 static void *http_connect_server(void *arg) {
-    (void)arg;
+    int port = (int)(intptr_t)arg;
 
-    int actual_port = 0;
-    int srv = make_local_server_any_port(
-                  HTTP_CONNECT_PORTS,
-                  (int)(sizeof(HTTP_CONNECT_PORTS) / sizeof(*HTTP_CONNECT_PORTS)),
-                  &actual_port);
+    int srv = make_local_server(port);
     if (srv < 0) {
-        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1 on any candidate port");
+        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1:%d — "
+               "port may be in use; change HTTPProxyPort in Settings", port);
         return NULL;
     }
     atomic_store(&g_http_connect_srv, srv);
-    atomic_store(&g_http_port_actual, actual_port);
-    syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d", actual_port);
+    atomic_store(&g_http_port_actual, port);
+    syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d", port);
 
     while (!shutdown_requested) {
         int client = accept(srv, NULL, NULL);
@@ -789,22 +778,19 @@ fail:
     return NULL;
 }
 
-/* Outbound SOCKS5 accept loop — binds on 127.0.0.1, trying candidate ports. */
+/* Outbound SOCKS5 accept loop — binds on 127.0.0.1 on the configured port. */
 static void *local_socks5_server(void *arg) {
-    (void)arg;
+    int port = (int)(intptr_t)arg;
 
-    int actual_port = 0;
-    int srv = make_local_server_any_port(
-                  LOCAL_SOCKS5_PORTS,
-                  (int)(sizeof(LOCAL_SOCKS5_PORTS) / sizeof(*LOCAL_SOCKS5_PORTS)),
-                  &actual_port);
+    int srv = make_local_server(port);
     if (srv < 0) {
-        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1 on any candidate port");
+        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1:%d — "
+               "port may be in use; change SOCKS5ProxyPort in Settings", port);
         return NULL;
     }
     atomic_store(&g_local_socks5_srv, srv);
-    atomic_store(&g_local_socks5_port_actual, actual_port);
-    syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d", actual_port);
+    atomic_store(&g_local_socks5_port_actual, port);
+    syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d", port);
 
     while (!shutdown_requested) {
         int client = accept(srv, NULL, NULL);
@@ -987,9 +973,11 @@ int main(int argc, char *argv[]) {
         atomic_store(&g_http_port_actual, 0);
         atomic_store(&g_local_socks5_port_actual, 0);
         pthread_t http_proxy_thread;
-        pthread_create(&http_proxy_thread, NULL, http_connect_server, NULL);
+        pthread_create(&http_proxy_thread, NULL, http_connect_server,
+                       (void *)(intptr_t)cfg.http_proxy_port);
         pthread_t local_socks5_thread;
-        pthread_create(&local_socks5_thread, NULL, local_socks5_server, NULL);
+        pthread_create(&local_socks5_thread, NULL, local_socks5_server,
+                       (void *)(intptr_t)cfg.socks5_proxy_port);
 
         /* Give the loopback proxy threads a moment to bind, then report
            the actual ports they secured (may differ from 8080/1080 if those
