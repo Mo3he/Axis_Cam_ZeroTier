@@ -130,12 +130,6 @@ cd acap3 && ./build.sh
 Each build cross-compiles [libzt](https://github.com/zerotier/libzt), builds
 the userspace proxy binary, and packages everything as an ACAP `.eap`.
 
-## Legacy versions
-
-The old root-based ACAP (v1.x) is preserved in the `aarch64/` and `arm/`
-directories for reference. These versions require root and will **not** work on
-Axis OS 12+.
-
 ## Links
 
 - [ZeroTier](https://zerotier.com/)
