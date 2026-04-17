@@ -401,15 +401,15 @@
     <div class="info-grid">
         <div class="info-item">
             <div class="info-label">HTTP Proxy</div>
-            <div class="info-value" style="font-size:12px;">http://127.0.0.1:8080</div>
+            <div class="info-value" id="proxy-http" style="font-size:12px;">-</div>
         </div>
         <div class="info-item">
             <div class="info-label">HTTPS Proxy</div>
-            <div class="info-value" style="font-size:12px;">http://127.0.0.1:8080</div>
+            <div class="info-value" id="proxy-https" style="font-size:12px;">-</div>
         </div>
         <div class="info-item">
             <div class="info-label">SOCKS5 (Outbound)</div>
-            <div class="info-value" style="font-size:12px;">127.0.0.1:1080</div>
+            <div class="info-value" id="proxy-socks-out" style="font-size:12px;">-</div>
         </div>
         <div class="info-item">
             <div class="info-label">SOCKS5 (Inbound)</div>
@@ -511,6 +511,22 @@
             if (nwm) networkId = nwm[1];
         }
 
+        // Extract actual loopback proxy ports from log
+        // "HTTP CONNECT proxy ready on 127.0.0.1:<port>"
+        var httpPortMatch = txt.match(/HTTP CONNECT proxy ready on 127\.0\.0\.1:([0-9]+)/g);
+        var httpPort = null;
+        if (httpPortMatch) {
+            var hpm = httpPortMatch[httpPortMatch.length - 1].match(/:([0-9]+)$/);
+            if (hpm) httpPort = hpm[1];
+        }
+        // "Outbound SOCKS5 proxy ready on 127.0.0.1:<port>"
+        var socks5OutMatch = txt.match(/Outbound SOCKS5 proxy ready on 127\.0\.0\.1:([0-9]+)/g);
+        var socks5OutPort = null;
+        if (socks5OutMatch) {
+            var som = socks5OutMatch[socks5OutMatch.length - 1].match(/:([0-9]+)$/);
+            if (som) socks5OutPort = som[1];
+        }
+
         // Detect running state
         var isRunning = /ZeroTier VPN is running/.test(txt);
         var isWaitingAuth = /authorize this node/.test(txt) && !isRunning;
@@ -518,14 +534,17 @@
 
         // Cache found values
         cacheSet('ip', ztIP); cacheSet('node', nodeId); cacheSet('network', networkId);
+        cacheSet('httpPort', httpPort); cacheSet('socks5OutPort', socks5OutPort);
         ztIP = ztIP || cacheGet('ip');
         nodeId = nodeId || cacheGet('node');
         networkId = networkId || cacheGet('network');
+        httpPort = httpPort || cacheGet('httpPort');
+        socks5OutPort = socks5OutPort || cacheGet('socks5OutPort');
 
-        if (isRunning) return { state: 'connected', ip: ztIP, node: nodeId, network: networkId };
-        if (isWaitingAuth) return { state: 'connecting', ip: null, node: nodeId, network: networkId };
-        if (isStarting) return { state: 'connecting', ip: null, node: nodeId, network: networkId };
-        return { state: 'disconnected', ip: null, node: nodeId, network: networkId };
+        if (isRunning) return { state: 'connected', ip: ztIP, node: nodeId, network: networkId, httpPort: httpPort, socks5OutPort: socks5OutPort };
+        if (isWaitingAuth) return { state: 'connecting', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
+        if (isStarting) return { state: 'connecting', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
+        return { state: 'disconnected', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
     }
 
     function classifyLine(msg) {
@@ -585,6 +604,12 @@
             document.getElementById('zt-network').className = 'info-value' + (r.network ? '' : ' dim');
             document.getElementById('zt-socks').textContent = r.ip ? r.ip + ':1080' : '-';
             document.getElementById('proxy-socks-in').textContent = r.ip ? r.ip + ':1080' : '-';
+
+            var httpAddr = r.httpPort ? 'http://127.0.0.1:' + r.httpPort : '-';
+            var socks5Addr = r.socks5OutPort ? '127.0.0.1:' + r.socks5OutPort : '-';
+            document.getElementById('proxy-http').textContent = httpAddr;
+            document.getElementById('proxy-https').textContent = httpAddr;
+            document.getElementById('proxy-socks-out').textContent = socks5Addr;
 
             info.style.display = '';
             proxy.style.display = '';
