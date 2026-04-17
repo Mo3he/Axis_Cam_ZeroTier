@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application.
 
-Current version: 1.16.4
+Current version: 1.16.5
 
 Download the pre-built `.eap` for your camera's architecture from the
 [latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
@@ -18,7 +18,7 @@ Adding a VPN client directly to the camera allows secure remote access without
 requiring any other equipment or network configuration. ZeroTier achieves this
 in a secure, simple, and lightweight way.
 
-Version 1.16.4 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
+Version 1.16.5 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
 Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
 - **No root required** — runs as the standard unprivileged `sdk` ACAP user (ACAP 4 builds)
@@ -29,9 +29,9 @@ Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, whi
 
 | Build | Axis OS | Architecture | File |
 |---|---|---|---|
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_4_aarch64.eap` |
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_4_armv7hf.eap` |
-| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_4_armv7hf_acap3.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_5_aarch64.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_5_armv7hf.eap` |
+| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_5_armv7hf_acap3.eap` |
 
 The ACAP 3 build targets cameras with `EmbeddedDevelopment.Version=2.x` (e.g. M1065-LW, M4206-V).
 Cameras on Axis OS 6.x or earlier (EmbeddedDevelopment 1.x) are not supported.

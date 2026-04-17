@@ -34,6 +34,9 @@
 #define PLANET_FILE     "/usr/local/packages/ZeroTier_VPN/localdata/planet"
 
 static pid_t zt_pid = -1;
+static guint reload_timer_id = 0;
+static gboolean pending_full_restart = FALSE;
+static AXParameter *g_ax_handle = NULL;
 
 /* ── base64 decoder ─────────────────────────────────────────────── */
 
@@ -95,10 +98,20 @@ static ssize_t base64_decode(const char *src, unsigned char **out) {
 static void stop_proxy(void) {
     if (zt_pid <= 0)
         return;
-
-    if (kill(zt_pid, SIGTERM) == 0)
-        waitpid(zt_pid, NULL, 0);
-
+    kill(zt_pid, SIGTERM);
+    /* Poll for up to 3 s so we never block the glib main loop forever. */
+    for (int i = 0; i < 30; i++) {
+        int status;
+        if (waitpid(zt_pid, &status, WNOHANG) == zt_pid) {
+            zt_pid = -1;
+            return;
+        }
+        usleep(100000); /* 100 ms */
+    }
+    /* Still alive after 3 s — force-kill. */
+    syslog(LOG_WARNING, "zerotier-userspace did not exit in 3 s, sending SIGKILL");
+    kill(zt_pid, SIGKILL);
+    waitpid(zt_pid, NULL, 0);
     zt_pid = -1;
 }
 
@@ -240,33 +253,70 @@ static bool update_planet_file(AXParameter *handle) {
 static void update_config_file(AXParameter *handle) {
     GError *error = NULL;
     gchar *network_id = NULL;
+    gchar *http_port = NULL;
+    gchar *socks5_port = NULL;
 
     if (!ax_parameter_get(handle, "NetworkID", &network_id, &error)) {
         if (error) { g_error_free(error); error = NULL; }
         network_id = g_strdup("");
     }
+    if (!ax_parameter_get(handle, "HTTPProxyPort", &http_port, &error)) {
+        if (error) { g_error_free(error); error = NULL; }
+        http_port = g_strdup("8080");
+    }
+    if (!ax_parameter_get(handle, "SOCKS5ProxyPort", &socks5_port, &error)) {
+        if (error) { g_error_free(error); error = NULL; }
+        socks5_port = g_strdup("1080");
+    }
+
+    /* Basic validation — fall back to defaults if non-numeric */
+    int hp = http_port  ? atoi(http_port)  : 0;
+    int sp = socks5_port ? atoi(socks5_port) : 0;
+    if (hp <= 0 || hp > 65535) { g_free(http_port);   http_port   = g_strdup("8080"); }
+    if (sp <= 0 || sp > 65535) { g_free(socks5_port); socks5_port = g_strdup("1080"); }
 
     FILE *f = fopen(CONFIG_FILE, "w");
     if (f) {
-        fprintf(f, "network_id=%s\n", network_id ? network_id : "");
+        fprintf(f, "network_id=%s\n", network_id   ? network_id   : "");
+        fprintf(f, "http_proxy_port=%s\n", http_port   ? http_port   : "8080");
+        fprintf(f, "socks5_proxy_port=%s\n", socks5_port ? socks5_port : "1080");
         fclose(f);
         chmod(CONFIG_FILE, 0600);
-        syslog(LOG_INFO, "config updated (network_id=%s)",
-               (network_id && *network_id) ? network_id : "(empty)");
+        syslog(LOG_INFO, "config updated (network_id=%s http_port=%s socks5_port=%s)",
+               (network_id && *network_id) ? network_id : "(empty)",
+               http_port, socks5_port);
     } else {
         syslog(LOG_ERR, "cannot open config file: %s", strerror(errno));
     }
 
     g_free(network_id);
+    g_free(http_port);
+    g_free(socks5_port);
 }
 
 /* ── ACAP parameter callback ─────────────────────────────────────── */
 
-static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *value,
-                               gpointer handle_void_ptr) {
-    AXParameter *handle = handle_void_ptr;
+static gboolean debounced_restart(gpointer G_GNUC_UNUSED data) {
+    reload_timer_id = 0;
+    /* Re-read all params from the store — by 300 ms the write is complete. */
+    if (g_ax_handle) {
+        update_planet_file(g_ax_handle);
+        update_config_file(g_ax_handle);
+    }
+    if (pending_full_restart) {
+        pending_full_restart = FALSE;
+        syslog(LOG_INFO, "restarting zerotier-userspace with new config");
+        stop_proxy();
+        start_proxy();
+    } else {
+        syslog(LOG_INFO, "reloading zerotier-userspace with new config");
+        reload_proxy();
+    }
+    return G_SOURCE_REMOVE;
+}
 
-    /* strip "root.ZeroTier_VPN." prefix for the log */
+static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *value,
+                               gpointer G_GNUC_UNUSED handle_void_ptr) {
     const char *short_name = name;
     const char *prefix = "root." APP_NAME ".";
     if (strncmp(name, prefix, strlen(prefix)) == 0)
@@ -274,22 +324,18 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
 
     syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    if (strcmp(short_name, "PlanetFile") == 0) {
-        /*
-         * The planet file is read by ZeroTier at node startup — a simple
-         * SIGUSR1 reload is not enough; the proxy must be fully restarted.
-         */
-        bool changed = update_planet_file(handle);
-        update_config_file(handle);
-        if (changed) {
-            syslog(LOG_INFO, "planet file changed — doing full proxy restart");
-            stop_proxy();
-            start_proxy();
-        }
-    } else {
-        update_config_file(handle);
-        reload_proxy();
+    /* PlanetFile, HTTPProxyPort, SOCKS5ProxyPort require a full restart. */
+    if (strcmp(short_name, "PlanetFile")      == 0 ||
+        strcmp(short_name, "HTTPProxyPort")   == 0 ||
+        strcmp(short_name, "SOCKS5ProxyPort") == 0) {
+        pending_full_restart = TRUE;
     }
+    /* Coalesce rapid multi-param saves into one restart 300 ms after the last
+     * change — keeps the GLib main loop responsive and ensures all params are
+     * committed to the store before the child is restarted. */
+    if (reload_timer_id)
+        g_source_remove(reload_timer_id);
+    reload_timer_id = g_timeout_add(300, debounced_restart, NULL);
 }
 
 /* ── signal handler ──────────────────────────────────────────────── */
@@ -316,13 +362,14 @@ int main(void) {
         if (error) g_error_free(error);
         return 1;
     }
+    g_ax_handle = handle;
 
     update_planet_file(handle);
     update_config_file(handle);
     start_proxy();
 
     /* Register callbacks for every parameter */
-    const char *params[] = { "NetworkID", "PlanetFile" };
+    const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
                                             parameter_changed, handle, &error)) {
