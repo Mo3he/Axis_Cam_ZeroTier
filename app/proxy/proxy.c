@@ -44,11 +44,13 @@
 static const int FORWARD_PORTS[] = { 80, 443, 554 };
 #define N_FORWARD_PORTS   (sizeof(FORWARD_PORTS) / sizeof(FORWARD_PORTS[0]))
 
-/* SOCKS5 proxy port on the ZeroTier interface */
+/* SOCKS5 proxy port on the ZeroTier interface (bound to ZT IP, not loopback) */
 #define SOCKS5_PORT       1080
 
-/* HTTP CONNECT proxy on loopback — outbound camera traffic through ZeroTier */
-#define HTTP_CONNECT_PORT 8080
+/* Preferred loopback proxy ports — tried in order; next port used if busy.
+ * (Other VPN ACAPs installed on the same camera may already hold port 8080/1080.) */
+static const int HTTP_CONNECT_PORTS[] = { 8080, 8181, 8282, 8383 };
+static const int LOCAL_SOCKS5_PORTS[] = { 1080, 1081, 1082, 1083 };
 
 /* Reload flag set by SIGUSR1 handler */
 static volatile sig_atomic_t reload_requested = 0;
@@ -59,8 +61,11 @@ static atomic_int g_srv_fds[N_FORWARD_PORTS + 1]; /* +1 for SOCKS5 */
 #define SOCKS5_SRV_IDX N_FORWARD_PORTS
 
 /* POSIX loopback server sockets — closed on reload with regular close() */
-static atomic_int g_http_connect_srv = -1; /* 127.0.0.1:HTTP_CONNECT_PORT */
-static atomic_int g_local_socks5_srv = -1; /* 127.0.0.1:SOCKS5_PORT */
+static atomic_int g_http_connect_srv = -1; /* 127.0.0.1:<chosen port> */
+static atomic_int g_local_socks5_srv = -1; /* 127.0.0.1:<chosen port> */
+/* Actual ports bound (0 = not yet bound / failed) */
+static atomic_int g_http_port_actual        = 0;
+static atomic_int g_local_socks5_port_actual = 0;
 
 static void close_server_sockets(void) {
     for (size_t i = 0; i < N_FORWARD_PORTS + 1; i++) {
@@ -577,6 +582,23 @@ static int make_local_server(int port) {
     return srv;
 }
 
+/* Try each candidate port in turn; bind 127.0.0.1 to the first one that
+   succeeds.  Sets *actual_port to the port that was bound.
+   Returns the server fd, or -1 if every candidate is in use. */
+static int make_local_server_any_port(const int *ports, int n, int *actual_port) {
+    for (int i = 0; i < n; i++) {
+        int fd = make_local_server(ports[i]);
+        if (fd >= 0) {
+            if (actual_port) *actual_port = ports[i];
+            return fd;
+        }
+        if (i + 1 < n)
+            syslog(LOG_WARNING, "port %d already in use, trying %d...",
+                   ports[i], ports[i + 1]);
+    }
+    return -1;
+}
+
 /* Read HTTP request headers from a POSIX fd (one byte at a time) until the
    blank line terminator \r\n\r\n is found or the buffer is full.
    Returns byte count, or -1 on error. */
@@ -647,19 +669,22 @@ fail_local:
     return NULL;
 }
 
-/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1:HTTP_CONNECT_PORT. */
+/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1, trying candidate ports. */
 static void *http_connect_server(void *arg) {
     (void)arg;
 
-    int srv = make_local_server(HTTP_CONNECT_PORT);
+    int actual_port = 0;
+    int srv = make_local_server_any_port(
+                  HTTP_CONNECT_PORTS,
+                  (int)(sizeof(HTTP_CONNECT_PORTS) / sizeof(*HTTP_CONNECT_PORTS)),
+                  &actual_port);
     if (srv < 0) {
-        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1:%d",
-               HTTP_CONNECT_PORT);
+        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1 on any candidate port");
         return NULL;
     }
     atomic_store(&g_http_connect_srv, srv);
-    syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d",
-           HTTP_CONNECT_PORT);
+    atomic_store(&g_http_port_actual, actual_port);
+    syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d", actual_port);
 
     while (!shutdown_requested) {
         int client = accept(srv, NULL, NULL);
@@ -764,19 +789,22 @@ fail:
     return NULL;
 }
 
-/* Outbound SOCKS5 accept loop — binds on 127.0.0.1:SOCKS5_PORT. */
+/* Outbound SOCKS5 accept loop — binds on 127.0.0.1, trying candidate ports. */
 static void *local_socks5_server(void *arg) {
     (void)arg;
 
-    int srv = make_local_server(SOCKS5_PORT);
+    int actual_port = 0;
+    int srv = make_local_server_any_port(
+                  LOCAL_SOCKS5_PORTS,
+                  (int)(sizeof(LOCAL_SOCKS5_PORTS) / sizeof(*LOCAL_SOCKS5_PORTS)),
+                  &actual_port);
     if (srv < 0) {
-        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1:%d",
-               SOCKS5_PORT);
+        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1 on any candidate port");
         return NULL;
     }
     atomic_store(&g_local_socks5_srv, srv);
-    syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d",
-           SOCKS5_PORT);
+    atomic_store(&g_local_socks5_port_actual, actual_port);
+    syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d", actual_port);
 
     while (!shutdown_requested) {
         int client = accept(srv, NULL, NULL);
@@ -956,16 +984,23 @@ int main(int argc, char *argv[]) {
         pthread_create(&socks5_thread, NULL, socks5_server, socks5_addr);
 
         /* Start outbound proxies on loopback (camera apps → ZeroTier) */
+        atomic_store(&g_http_port_actual, 0);
+        atomic_store(&g_local_socks5_port_actual, 0);
         pthread_t http_proxy_thread;
         pthread_create(&http_proxy_thread, NULL, http_connect_server, NULL);
         pthread_t local_socks5_thread;
         pthread_create(&local_socks5_thread, NULL, local_socks5_server, NULL);
 
+        /* Give the loopback proxy threads a moment to bind, then report
+           the actual ports they secured (may differ from 8080/1080 if those
+           are taken by another VPN ACAP). */
+        zts_util_delay(500);
         syslog(LOG_INFO, "ZeroTier VPN is running — "
                "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d | "
                "HTTP proxy: 127.0.0.1:%d | Outbound SOCKS5: 127.0.0.1:%d",
                zt_addr_str, zt_addr_str, SOCKS5_PORT,
-               HTTP_CONNECT_PORT, SOCKS5_PORT);
+               atomic_load(&g_http_port_actual),
+               atomic_load(&g_local_socks5_port_actual));
 
         /* Snapshot current config mtime so the change-detection loop
            doesn't immediately fire on the write that brought us here */
