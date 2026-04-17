@@ -1,31 +1,24 @@
 # ZeroTier VPN ACAP
 
-A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application.
+A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application, enabling secure remote access without requiring any other equipment or network configuration. ZeroTier achieves this in a secure, simple, and lightweight way.
 
-Current version: 1.16.6
+Current version: **1.16.6**
+
+The app runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
+
+- **No root required** — runs as the standard unprivileged `sdk` ACAP user (ACAP 4 builds)
+- **Compatible with Axis OS 9.x through 12** — see the Compatibility section below
+- **No kernel TUN device** — all networking is handled inside the process
 
 Download the pre-built `.eap` for your camera's architecture from the
 [latest release](https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest)
-and install via the camera's web interface under Apps → Add app.
+and install via the camera's web interface under **Apps → Add app**.
 
 [![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/mo3he)
 
 > **Disclaimer:** This is an independent, community-developed ACAP package and is not an official Axis Communications product. It is not affiliated with, endorsed by, or supported by Axis Communications AB. Use it at your own risk. For official Axis software, visit axis.com 
 
 > **ZeroTier Notice:** ZeroTier is a product of ZeroTier, Inc. This package independently redistributes ZeroTier components (ZeroTierOne, libzt, lwIP) under their respective licenses (MPL 2.0, Apache 2.0, BSD 3-Clause — see [LICENSE](LICENSE)) and is not affiliated with, endorsed by, or supported by ZeroTier, Inc. For the official ZeroTier client, visit [zerotier.com](https://zerotier.com).
-
-## Overview
-
-Adding a VPN client directly to the camera allows secure remote access without
-requiring any other equipment or network configuration. ZeroTier achieves this
-in a secure, simple, and lightweight way.
-
-Version 1.16.6 runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier
-Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
-
-- **No root required** — runs as the standard unprivileged `sdk` ACAP user (ACAP 4 builds)
-- **Compatible with Axis OS 9.x through 12** — see the Compatibility section below
-- **No kernel TUN device** — all networking is handled inside the process
 
 ## Compatibility
 
