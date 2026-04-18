@@ -1,6 +1,7 @@
 PROGS     = ZeroTier_VPN
 SRCS      = config_bridge.c
 OBJS      = $(SRCS:.c=.o)
+STRIP ?= strip
 
 PKGS = glib-2.0 gio-2.0 axparameter
 
@@ -20,6 +21,7 @@ CFLAGS += -Wall \
           -W
 
 all: $(PROGS)
+	$(STRIP) $(PROGS)
 
 $(PROGS): $(OBJS)
 	$(CC) $(LDFLAGS) $^ $(LIBS) $(LDLIBS) -o $@
