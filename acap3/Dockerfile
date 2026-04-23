@@ -18,6 +18,8 @@ RUN git clone --branch ${LIBZT_VERSION} \
     printf 'import sys\ns=open("src/Utilities.cpp").read()\ns=s.replace("#include <node/C25519.hpp>","#include <node/ECC.hpp>")\ns=s.replace("#include <node/World.hpp>\\n","")\nstart=s.find("int zts_util_sign_root_set(")\nbrace=s.index("{",start)\nd,i=0,brace\nwhile i<len(s):\n    if s[i]=="{":d+=1\n    elif s[i]=="}":d-=1\n    if d==0:break\n    i+=1\ns=s[:brace]+"{ return ZTS_ERR_GENERAL; }"+s[i+1:]\nopen("src/Utilities.cpp","w").write(s)\n' > /tmp/patch_utils.py && \
     python3 /tmp/patch_utils.py
 
+# MAKE_JOBS: cap parallel C++ jobs to avoid OOM in memory-constrained envs
+ARG MAKE_JOBS=2
 # Write cmake toolchain file for armv7hf cross-compilation, then build libzt
 RUN . /opt/axis/acapsdk/environment-setup* && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \
@@ -46,7 +48,7 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
         -DBUILD_SHARED_LIB=OFF \
         -DBUILD_HOST_SELFTEST=OFF \
         -DALLOW_INSTALL_TARGET=OFF && \
-    make -j$(nproc) zt-static
+    make -j"${MAKE_JOBS}" zt-static
 
 COPY ./app /opt/app/
 # copy the repo LICENSE so create-package.sh can find it
@@ -57,7 +59,7 @@ WORKDIR /opt/app
 RUN cp html/index.html index.html
 
 # Patch the version placeholder in package.conf (ACAP3 uses major.minor.patch)
-ARG ACAP_VERSION=1.16.6
+ARG ACAP_VERSION=1.16.7
 RUN sed -i "s/VERSION=BUILDVER/VERSION=${ACAP_VERSION}/" package.conf
 
 # Build the main ACAP binary (config_bridge.c)

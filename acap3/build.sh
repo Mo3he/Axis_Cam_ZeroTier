@@ -2,19 +2,44 @@
 set -eu
 
 REPO_ROOT=$(cd -P "$(dirname "$0")" && pwd)
-VERSION=1.16.6
+# The acap3 eap is placed in the parent repo root alongside the other eaps
+PARENT_ROOT=$(cd -P "$(dirname "$0")/.." && pwd)
+VERSION=1.16.7
+
+# Auto-detect container runtime (prefer docker if daemon is running, fall back to podman)
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CTR=docker
+elif command -v podman >/dev/null 2>&1; then
+    CTR=podman
+else
+    echo 'Error: neither docker (with running daemon) nor podman found' >&2
+    exit 1
+fi
+echo "==> Using container runtime: ${CTR}"
+
+# Resolve a real (non-symlink) temp directory - Podman on macOS can't follow
+# the /tmp -> /private/tmp symlink when using 'cp'.
+TMPBASE=$(cd -P "${TMPDIR:-/tmp}" && pwd)
+
+# Build flags - enable layer caching for podman (docker always caches)
+BUILD_FLAGS=''
+if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
+
+# Remove old acap3 .eap files from the parent repo root so only fresh ones remain
+echo '==> Cleaning old .eap files...'
+rm -f "$PARENT_ROOT"/*_acap3.eap
 
 echo '==> Building ACAP 3 armv7hf (for AXIS OS 9.x / 10.x cameras)...'
-docker build --build-arg ACAP_VERSION="${VERSION}" --tag 'zerotier-vpn-acap3-armv7hf' "$REPO_ROOT"
+${CTR} build ${BUILD_FLAGS} --build-arg ACAP_VERSION="${VERSION}" --tag 'zerotier-vpn-acap3-armv7hf' "$REPO_ROOT"
 
 echo '==> Extracting .eap package...'
-CID=$(docker create 'zerotier-vpn-acap3-armv7hf')
-docker cp "${CID}":/opt/app/ /tmp/acap3-out
+CID=$(${CTR} create 'zerotier-vpn-acap3-armv7hf')
+${CTR} cp "${CID}":/opt/app/ "${TMPBASE}/acap3-out"
 # Rename to consistent naming scheme regardless of what create-package.sh calls it
-find /tmp/acap3-out -name '*.eap' -exec cp {} \
-    "$REPO_ROOT/ZeroTier_VPN_$(echo "${VERSION}" | tr '.' '_')_armv7hf_acap3.eap" \;
-docker rm "${CID}" >/dev/null
-rm -rf /tmp/acap3-out
+find "${TMPBASE}/acap3-out" -name '*.eap' -exec cp {} \
+    "$PARENT_ROOT/ZeroTier_VPN_$(echo "${VERSION}" | tr '.' '_')_armv7hf_acap3.eap" \;
+${CTR} rm "${CID}" >/dev/null
+rm -rf "${TMPBASE}/acap3-out"
 
 echo '==> Done!'
-ls -lh "$REPO_ROOT"/*.eap
+ls -lh "$PARENT_ROOT"/*.eap

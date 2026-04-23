@@ -24,6 +24,8 @@ RUN git clone --branch ${LIBZT_VERSION} \
     python3 /tmp/patch_utils.py
 
 # Write a cmake toolchain file for cross-compilation, then build libzt
+# MAKE_JOBS: cap parallel C++ jobs to avoid OOM in memory-constrained envs
+ARG MAKE_JOBS=2
 ARG ARCH
 RUN . /opt/axis/acapsdk/environment-setup* && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \
@@ -53,13 +55,13 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
         -DBUILD_SHARED_LIB=OFF \
         -DBUILD_HOST_SELFTEST=OFF \
         -DALLOW_INSTALL_TARGET=OFF && \
-    make -j$(nproc) zt-static
+    make -j"${MAKE_JOBS}" zt-static
 
 COPY ./app /opt/app/
 WORKDIR /opt/app
 
 # Patch the architecture and version placeholders in manifest.json
-ARG ACAP_VERSION=1.16.6
+ARG ACAP_VERSION=1.16.7
 ARG ZT_CORE_VERSION
 ARG ACAP_VERSION
 RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json && \

@@ -38,6 +38,8 @@
 #define APP_NAME          "ZeroTier_VPN"
 #define DEFAULT_CONFIG    "/usr/local/packages/ZeroTier_VPN/config.txt"
 #define STATE_DIR         "/usr/local/packages/ZeroTier_VPN/localdata"
+#define STATUS_FILE       "/usr/local/packages/ZeroTier_VPN/html/status.json"
+#define STATUS_FILE_TMP   "/usr/local/packages/ZeroTier_VPN/html/status.json.tmp"
 #define RELAY_BUF_SIZE    8192
 
 /* Transparent port-forwarding: ZeroTier-IP:port → 127.0.0.1:port */
@@ -81,6 +83,47 @@ static void close_server_sockets(void) {
 
 /* Current network ID (0 = not joined) */
 static uint64_t current_nwid = 0;
+
+/* ── status file ─────────────────────────────────────────────────── */
+
+/*
+ * Write an atomic JSON status file served at /local/ZeroTier_VPN/status.json.
+ * The UI reads this as its primary source of truth so it reflects the actual
+ * tunnel state rather than relying solely on log parsing.
+ *
+ * state:      "starting" | "waiting_config" | "waiting_auth" | "connected" | "disconnected"
+ * node_id:    hex node ID string, or NULL
+ * zt_ip:      assigned ZeroTier IP, or NULL
+ * network_id: 16-hex network ID, or NULL
+ * http_port:  actual bound HTTP proxy port (0 = not bound)
+ * socks5_port: actual bound outbound SOCKS5 port (0 = not bound)
+ */
+static void write_status(const char *state, const char *node_id,
+                         const char *zt_ip, const char *network_id,
+                         int http_port, int socks5_port)
+{
+    FILE *f = fopen(STATUS_FILE_TMP, "w");
+    if (!f) return;
+    fprintf(f,
+        "{\n"
+        "  \"state\": \"%s\",\n"
+        "  \"node_id\": \"%s\",\n"
+        "  \"zt_ip\": \"%s\",\n"
+        "  \"network_id\": \"%s\",\n"
+        "  \"http_port\": %d,\n"
+        "  \"socks5_port\": %d,\n"
+        "  \"ts\": %ld\n"
+        "}\n",
+        state,
+        node_id    ? node_id    : "",
+        zt_ip      ? zt_ip      : "",
+        network_id ? network_id : "",
+        http_port, socks5_port,
+        (long)time(NULL));
+    fclose(f);
+    rename(STATUS_FILE_TMP, STATUS_FILE);
+    chmod(STATUS_FILE, 0644);
+}
 
 /* ── config ──────────────────────────────────────────────────────── */
 
@@ -863,14 +906,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    write_status("starting", NULL, NULL, NULL, 0, 0);
     syslog(LOG_INFO, "Waiting for ZeroTier node to come online...");
     while (!zts_node_is_online()) {
         if (shutdown_requested) goto cleanup;
         zts_util_delay(200);
     }
 
-    syslog(LOG_INFO, "Node online, ID: %llx",
-           (unsigned long long)zts_node_get_id());
+    {
+        char node_hex[20];
+        snprintf(node_hex, sizeof(node_hex), "%llx",
+                 (unsigned long long)zts_node_get_id());
+        syslog(LOG_INFO, "Node online, ID: %s", node_hex);
+        write_status("waiting_config", node_hex, NULL, NULL, 0, 0);
+    }
 
     /* Track config file mtime for auto-reload */
     struct stat st;
@@ -881,9 +930,14 @@ int main(int argc, char *argv[]) {
 
     /* Main loop: load config, join network, run proxy */
     while (!shutdown_requested) {
+        char node_hex[20];
+        snprintf(node_hex, sizeof(node_hex), "%llx",
+                 (unsigned long long)zts_node_get_id());
+
         config_t cfg;
         if (!load_config(config_path, &cfg) || cfg.network_id[0] == '\0') {
             syslog(LOG_INFO, "Config incomplete — waiting for network ID");
+            write_status("waiting_config", node_hex, NULL, NULL, 0, 0);
             for (int i = 0; i < 50 && !shutdown_requested && !reload_requested; i++)
                 zts_util_delay(200);
             if (reload_requested) { reload_requested = 0; continue; }
@@ -923,6 +977,7 @@ int main(int argc, char *argv[]) {
         syslog(LOG_INFO, "Waiting for address assignment on network %s "
                "(authorize this node in ZeroTier Central: %llx)",
                cfg.network_id, (unsigned long long)zts_node_get_id());
+        write_status("waiting_auth", node_hex, NULL, cfg.network_id, 0, 0);
 
         int got_addr = 0;
         for (int i = 0; i < 300 && !shutdown_requested && !reload_requested; i++) {
@@ -989,6 +1044,9 @@ int main(int argc, char *argv[]) {
                zt_addr_str, zt_addr_str, SOCKS5_PORT,
                atomic_load(&g_http_port_actual),
                atomic_load(&g_local_socks5_port_actual));
+        write_status("connected", node_hex, zt_addr_str, cfg.network_id,
+                     atomic_load(&g_http_port_actual),
+                     atomic_load(&g_local_socks5_port_actual));
 
         /* Snapshot current config mtime so the change-detection loop
            doesn't immediately fire on the write that brought us here */
@@ -996,12 +1054,29 @@ int main(int argc, char *argv[]) {
             last_mtime = st.st_mtime;
 
         /* Wait for reload or shutdown */
+        int heartbeat_ticks = 0;
         while (!shutdown_requested && !reload_requested) {
             /* Check for config file changes */
             if (stat(config_path, &st) == 0 && st.st_mtime > last_mtime) {
                 last_mtime = st.st_mtime;
                 syslog(LOG_INFO, "Config file changed — reloading");
                 break;
+            }
+            /* Emit a heartbeat every 5 minutes so the UI log never goes stale
+               after syslog rotates the initial startup messages out. */
+            if (++heartbeat_ticks >= 60) {
+                heartbeat_ticks = 0;
+                syslog(LOG_INFO, "ZeroTier VPN is running — "
+                       "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d | "
+                       "HTTP proxy: 127.0.0.1:%d | Outbound SOCKS5: 127.0.0.1:%d",
+                       zt_addr_str, zt_addr_str, SOCKS5_PORT,
+                       atomic_load(&g_http_port_actual),
+                       atomic_load(&g_local_socks5_port_actual));
+                /* Also refresh the status file timestamp so the UI can detect
+                   stale/dead status files (ts more than ~10 min old = suspect). */
+                write_status("connected", node_hex, zt_addr_str, cfg.network_id,
+                             atomic_load(&g_http_port_actual),
+                             atomic_load(&g_local_socks5_port_actual));
             }
             zts_util_delay(5000);
         }
@@ -1026,6 +1101,7 @@ int main(int argc, char *argv[]) {
     }
 
 cleanup:
+    write_status("disconnected", NULL, NULL, NULL, 0, 0);
     syslog(LOG_INFO, "Shutting down ZeroTier node");
     if (current_nwid != 0)
         zts_net_leave(current_nwid);

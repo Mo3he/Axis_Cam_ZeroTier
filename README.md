@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application, enabling secure remote access without requiring any other equipment or network configuration. ZeroTier achieves this in a secure, simple, and lightweight way.
 
-Current version: **1.16.6**
+Current version: **1.16.7**
 
 The app runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 

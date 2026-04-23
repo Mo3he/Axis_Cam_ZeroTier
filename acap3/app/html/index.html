@@ -512,6 +512,7 @@
 (function() {
     var APP = 'ZeroTier_VPN';
     var LOG_URL = '/axis-cgi/admin/systemlog.cgi?appname=' + APP;
+    var STATUS_URL = '/local/' + APP + '/status.json';
     var logBox = document.getElementById('log-box');
     var autoScroll = true;
 
@@ -554,6 +555,44 @@
     // Cache helpers
     function cacheSet(k, v) { if (v) try { localStorage.setItem('zt-' + k, v); } catch(e){} }
     function cacheGet(k) { try { return localStorage.getItem('zt-' + k); } catch(e){ return null; } }
+
+    // Fetch the status.json written by proxy.c — primary source of truth
+    function fetchStatus() {
+        return fetch(STATUS_URL, { cache: 'no-store', credentials: 'same-origin' })
+            .then(function(r) {
+                if (!r.ok) throw new Error('status ' + r.status);
+                return r.json();
+            });
+    }
+
+    // Convert a status.json object to the result shape used by render()
+    function parseStatus(s) {
+        var hp = s.http_port  ? String(s.http_port)  : null;
+        var sp = s.socks5_port ? String(s.socks5_port) : null;
+        var node = s.node_id    || null;
+        var ip   = s.zt_ip     || null;
+        var net  = s.network_id || null;
+        if (s.state === 'connected') {
+            cacheSet('state', 'connected');
+            cacheSet('ip', ip); cacheSet('node', node);
+            cacheSet('network', net);
+            cacheSet('httpPort', hp); cacheSet('socks5OutPort', sp);
+            return { state: 'connected', ip: ip, node: node, network: net,
+                     httpPort: hp, socks5OutPort: sp };
+        }
+        if (s.state === 'waiting_auth') {
+            return { state: 'connecting', ip: null, node: node, network: net,
+                     httpPort: null, socks5OutPort: null };
+        }
+        if (s.state === 'disconnected') {
+            cacheSet('state', 'disconnected');
+            return { state: 'disconnected', ip: null, node: node, network: net,
+                     httpPort: null, socks5OutPort: null };
+        }
+        // starting | waiting_config
+        return { state: 'connecting', ip: null, node: node, network: net,
+                 httpPort: null, socks5OutPort: null };
+    }
 
     function parse(txt) {
         // Extract Node ID: "Node online, ID: XXXXXXXXXX"
@@ -610,10 +649,13 @@
         httpPort = httpPort || cacheGet('httpPort');
         socks5OutPort = socks5OutPort || cacheGet('socks5OutPort');
 
-        if (isRunning) return { state: 'connected', ip: ztIP, node: nodeId, network: networkId, httpPort: httpPort, socks5OutPort: socks5OutPort };
+        if (isRunning) {
+            cacheSet('state', 'connected');
+            return { state: 'connected', ip: ztIP, node: nodeId, network: networkId, httpPort: httpPort, socks5OutPort: socks5OutPort };
+        }
         if (isWaitingAuth) return { state: 'connecting', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
         if (isStarting) return { state: 'connecting', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
-        return { state: 'disconnected', ip: null, node: nodeId, network: networkId, httpPort: null, socks5OutPort: null };
+        return { state: 'disconnected', ip: ztIP, node: nodeId, network: networkId, httpPort: httpPort, socks5OutPort: socks5OutPort };
     }
 
     function classifyLine(msg) {
@@ -631,6 +673,11 @@
     function renderLogs(txt) {
         var lines = txt.split('\n').filter(function(l) { return l.trim(); });
         document.getElementById('log-count').textContent = lines.length + ' lines';
+
+        if (lines.length === 0) {
+            logBox.innerHTML = '<span class="log-line"><span class="msg-info">Log buffer is empty — the syslog has rotated. The service status above reflects the live app state.</span></span>';
+            return;
+        }
 
         var h = '';
         for (var i = 0; i < lines.length; i++) {
@@ -710,18 +757,39 @@
         Promise.all([
             fetch(LOG_URL, { cache: 'no-store', credentials: 'same-origin' })
                 .then(function(r) { return r.text(); }),
-            checkAppRunning()
+            checkAppRunning(),
+            fetchStatus().catch(function() { return null; })
         ]).then(function(results) {
             var txt     = results[0];
             var running = results[1];
-            var result  = parse(txt);
+            var status  = results[2]; /* null if status.json not yet present */
+
             renderLogs(txt);
+
             if (!running) {
-                result.state = 'disconnected';
+                /* ACAP is stopped - always show disconnected regardless of status file */
+                cacheSet('state', 'disconnected');
+                render({ state: 'disconnected', ip: null, node: null,
+                         network: null, httpPort: null, socks5OutPort: null });
+                return;
             }
-            render(result);
+
+            if (status) {
+                /* status.json is the authoritative source */
+                render(parseStatus(status));
+            } else {
+                /* status.json not yet written (first boot / old firmware).
+                   Fall back to log parsing with localStorage cache. */
+                var result = parse(txt);
+                if (result.state === 'disconnected') {
+                    var cachedState = cacheGet('state');
+                    if (cachedState === 'connected') result.state = 'connected';
+                    else result.state = 'connecting';
+                }
+                render(result);
+            }
         }).catch(function() {
-            document.getElementById('status-text').textContent = 'Unable to fetch logs';
+            document.getElementById('status-text').textContent = 'Unable to fetch status';
         });
     }
 
@@ -954,7 +1022,7 @@
             .then(function(data) {
                 var tag = (data.tag_name || '').replace(/^v/, '');
                 if (!tag) return;
-                if (compareVersions(tag, '1.16.6') > 0) {
+                if (compareVersions(tag, '1.16.7') > 0) {
                     document.getElementById('update-version').textContent = 'v' + tag;
                     document.getElementById('update-banner').classList.add('visible');
                     if (btn) btn.textContent = 'Update Available';
