@@ -1062,6 +1062,17 @@ int main(int argc, char *argv[]) {
                 syslog(LOG_INFO, "Config file changed — reloading");
                 break;
             }
+            /* Detect address loss — important for custom planet servers where
+               root keepalives can drop and ZeroTier silently loses the network
+               membership without killing the process.  Re-enter the join loop
+               so the proxy reconnects automatically. */
+            if (!zts_addr_is_assigned(nwid, ZTS_AF_INET)) {
+                syslog(LOG_WARNING,
+                       "ZeroTier address lost on network %s — rejoining",
+                       cfg.network_id);
+                write_status("waiting_auth", node_hex, NULL, cfg.network_id, 0, 0);
+                break;
+            }
             /* Emit a heartbeat every 5 minutes so the UI log never goes stale
                after syslog rotates the initial startup messages out. */
             if (++heartbeat_ticks >= 60) {

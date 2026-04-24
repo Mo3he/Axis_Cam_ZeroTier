@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application, enabling secure remote access without requiring any other equipment or network configuration. ZeroTier achieves this in a secure, simple, and lightweight way.
 
-Current version: **1.16.7**
+Current version: **1.16.8**
 
 The app runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
@@ -24,9 +24,9 @@ and install via the camera's web interface under **Apps → Add app**.
 
 | Build | Axis OS | Architecture | File |
 |---|---|---|---|
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_5_aarch64.eap` |
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_5_armv7hf.eap` |
-| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_5_armv7hf_acap3.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_8_aarch64.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_8_armv7hf.eap` |
+| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_8_armv7hf_acap3.eap` |
 
 The ACAP 3 build targets cameras with `EmbeddedDevelopment.Version=2.x` (e.g. M1065-LW, M4206-V).
 Cameras on Axis OS 6.x or earlier (EmbeddedDevelopment 1.x) are not supported.
@@ -51,10 +51,13 @@ and install via the camera's web interface under Apps → Add app.
 2. Go to the app's settings page (⋮ → Settings).
 3. Enter your **ZeroTier Network ID** (16-character hex string from
    [my.zerotier.com](https://my.zerotier.com)).
-4. Click **Open** to view the status page and logs.
-5. **Authorize the device** — go to
-   [ZeroTier Central](https://my.zerotier.com), find the camera's Node ID in
-   your network members, and check the "Auth" box.
+4. *(Optional)* If using a **private ZeroTier planet** (self-hosted root
+   server), upload your planet file using the **Planet File** field.
+   Leave it empty to use the default ZeroTier public infrastructure.
+5. Click **Open** to view the status page and logs.
+6. **Authorize the device** — go to
+   [ZeroTier Central](https://my.zerotier.com) (or your private controller),
+   find the camera's Node ID in your network members, and check the "Auth" box.
 
 ### Via the Axis parameter API
 
@@ -110,7 +113,13 @@ automatically falls back to the next available port (8181/8282/8383 for HTTP,
 
 ## Building from source
 
-Requires Docker. Two separate build scripts cover the two SDK generations.
+Requires Docker or Podman. The build scripts auto-detect which is available.
+Two separate build scripts cover the two SDK generations.
+
+The slow step (cloning and compiling [libzt](https://github.com/zerotier/libzt)
++ ZeroTierOne) is isolated into a **base image** that is built once and reused
+on every subsequent rebuild. After the first run, rebuilding after a code change
+takes under a minute.
 
 **ACAP 4 native SDK (Axis OS 11.11+, aarch64 + armv7hf):**
 ```
@@ -119,11 +128,15 @@ Requires Docker. Two separate build scripts cover the two SDK generations.
 
 **ACAP 3 SDK (Axis OS 9.x – 10.x, armv7hf only):**
 ```
-cd acap3 && ./build.sh
+./acap3/build.sh
 ```
 
-Each build cross-compiles [libzt](https://github.com/zerotier/libzt), builds
-the userspace proxy binary, and packages everything as an ACAP `.eap`.
+To force a rebuild of the libzt base images (e.g. after upgrading libzt or the
+SDK version), pass `--build-base`:
+```
+./build.sh --build-base
+./acap3/build.sh --build-base
+```
 
 ## Links
 

@@ -22,6 +22,28 @@ TMPBASE=$(cd -P "${TMPDIR:-/tmp}" && pwd)
 BUILD_FLAGS=''
 if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
 
+# Build the slow libzt base images if they are missing.
+# Pass --build-base to force a rebuild of the base (needed when upgrading
+# LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version).
+FORCE_BASE=0
+for arg in "$@"; do
+    [ "$arg" = '--build-base' ] && FORCE_BASE=1
+done
+
+for ARCH in aarch64 armv7hf; do
+    BASE_TAG="zerotier-libzt-base-${ARCH}"
+    if [ "$FORCE_BASE" = '1' ] || ! ${CTR} image exists "${BASE_TAG}" 2>/dev/null; then
+        echo "==> Building libzt base for ${ARCH} (one-time, ~10-20 min)..."
+        ${CTR} build ${BUILD_FLAGS} \
+            --build-arg ARCH="${ARCH}" \
+            --tag "${BASE_TAG}" \
+            -f "$REPO_ROOT/Dockerfile.libzt" \
+            "$REPO_ROOT"
+    else
+        echo "==> libzt base for ${ARCH} already built — skipping"
+    fi
+done
+
 # Remove old .eap files so only the freshly built ones remain
 echo '==> Cleaning old .eap files...'
 rm -f "$REPO_ROOT"/*.eap
