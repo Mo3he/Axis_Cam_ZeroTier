@@ -31,7 +31,7 @@
 #define APP_NAME        "ZeroTier_VPN"
 #define CONFIG_FILE     "/usr/local/packages/ZeroTier_VPN/config.txt"
 #define ZT_BINARY       "/usr/local/packages/ZeroTier_VPN/lib/zerotier-userspace"
-#define PLANET_FILE     "/usr/local/packages/ZeroTier_VPN/localdata/planet"
+#define PLANET_FILE     "/usr/local/packages/ZeroTier_VPN/localdata/roots"
 
 static pid_t zt_pid = -1;
 static guint reload_timer_id = 0;

@@ -4,7 +4,7 @@ set -eu
 REPO_ROOT=$(cd -P "$(dirname "$0")" && pwd)
 # The acap3 eap is placed in the parent repo root alongside the other eaps
 PARENT_ROOT=$(cd -P "$(dirname "$0")/.." && pwd)
-VERSION=1.16.8
+VERSION=1.16.9
 
 # Auto-detect container runtime (prefer docker if daemon is running, fall back to podman)
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then

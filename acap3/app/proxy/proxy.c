@@ -892,6 +892,18 @@ int main(int argc, char *argv[]) {
         mkdir(nets_dir, 0755);
     }
 
+    /* Log whether a custom planet (roots) file is active */
+    {
+        char roots_path[512];
+        struct stat rst;
+        snprintf(roots_path, sizeof(roots_path), "%s/roots", STATE_DIR);
+        if (stat(roots_path, &rst) == 0)
+            syslog(LOG_INFO, "Custom planet file active (%ld bytes) — connecting to self-hosted controller",
+                   (long)rst.st_size);
+        else
+            syslog(LOG_INFO, "No custom planet file — using built-in ZeroTier planet (zerotier.com)");
+    }
+
     /* Initialize ZeroTier from persistent state */
     int rc = zts_init_from_storage(STATE_DIR);
     if (rc != ZTS_ERR_OK) {
@@ -974,9 +986,16 @@ int main(int argc, char *argv[]) {
         }
 
         /* Wait for IP address assignment */
-        syslog(LOG_INFO, "Waiting for address assignment on network %s "
-               "(authorize this node in ZeroTier Central: %llx)",
-               cfg.network_id, (unsigned long long)zts_node_get_id());
+        {
+            char roots_path[512];
+            struct stat rst;
+            snprintf(roots_path, sizeof(roots_path), "%s/roots", STATE_DIR);
+            bool custom_planet = (stat(roots_path, &rst) == 0);
+            syslog(LOG_INFO, "Waiting for address assignment on network %s "
+                   "(authorize node %llx in %s)",
+                   cfg.network_id, (unsigned long long)zts_node_get_id(),
+                   custom_planet ? "your self-hosted ZeroTier controller" : "ZeroTier Central");
+        }
         write_status("waiting_auth", node_hex, NULL, cfg.network_id, 0, 0);
 
         int got_addr = 0;
