@@ -138,6 +138,21 @@ SDK version), pass `--build-base`:
 ./acap3/build.sh --build-base
 ```
 
+## Roadmap
+
+### AXIS OS 13 Preparation
+
+AXIS OS 13 is scheduled for release in September 2026 and introduces several breaking changes that affect all ACAP applications. A preview build with all breaking changes is available for testing.
+
+- [ ] **Recompile for 64-bit time (Y2038)** - AXIS OS 13 switches to a 64-bit time interface to solve the Year 2038 problem. All ACAP applications must be recompiled against the updated SDK or the device will roll back the OS upgrade. Both ACAP 4 and ACAP 3 builds need to be updated.
+- [ ] **Sign the ACAP via the ACAP Portal** - Unsigned ACAP applications will no longer be installable in production environments. The app needs to go through the official Axis signing process once AXIS OS 13 launches.
+- [ ] **Migrate manifest to Schema v2** - The `manifest.json` must use Manifest Schema v2 and explicitly declare which AXIS OS versions the app is compatible with to prevent compatibility issues after updates.
+- [ ] **Audit for executable stack usage** - Verify that neither the ACAP binary nor any bundled library (libzt, lwIP) uses an executable stack, as this will be blocked by new security restrictions in OS 13.
+- [ ] **Review HTTP port forwarding under HTTPS-only policy** - OS 13 enforces HTTPS-only connections by default. Evaluate the impact on the port 80 (HTTP) forwarding feature and update documentation or behaviour accordingly.
+- [ ] **Review install/uninstall script compliance** - Check any post-install or pre-uninstall scripts against the updated rules introduced in OS 13.
+
+Reference: [AXIS OS 13 Breaking Changes](https://www.axis.com/for-developers/news/AXIS-OS-13-breaking-changes) | [Full change list](https://help.axis.com/en-us/axis-os#changes-in-axis-os-13)
+
 ## Links
 
 - [ZeroTier](https://zerotier.com/)
