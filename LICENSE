@@ -26,10 +26,3 @@ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
---------------------------------------------------------------------------------
-
-This distribution bundles third-party components under their own licenses
-(ZeroTierOne under MPL-2.0, libzt under Apache-2.0, lwIP under BSD, and
-prometheus-cpp-lite under MIT). See THIRD_PARTY_NOTICES.md for the full
-attributions and license texts.
