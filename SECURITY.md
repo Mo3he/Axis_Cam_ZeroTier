@@ -10,7 +10,7 @@ a public issue:
 
 - Use GitHub's **[Report a vulnerability](../../security/advisories/new)**
   (Security > Advisories) to open a private advisory, or
-- email **mblieden@gmail.com** with the details.
+- email **moshe@mohome.net** with the details.
 
 Please include:
 
