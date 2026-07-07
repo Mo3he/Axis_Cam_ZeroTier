@@ -13,11 +13,11 @@ Mozilla Public License, Version 2.0
 
 The ZeroTierOne `node/` and `service/` components are licensed under the Mozilla
 Public License, Version 2.0. A copy of the MPL is available at:
-https://mozilla.org/MPL/2.0/
+<https://mozilla.org/MPL/2.0/>
 
 Source code, including build-time modifications made to this component
 (`node/AES.hpp`: `ZT_AES_NO_ACCEL` enabled for ARM cross-compilation), is
-available at: https://github.com/Mo3he/Axis_Cam_ZeroTier
+available at: <https://github.com/Mo3he/Axis_Cam_ZeroTier>
 
 This product includes software developed by ZeroTier, Inc.
 <https://github.com/zerotier/ZeroTierOne>
@@ -32,7 +32,7 @@ Apache License, Version 2.0
 libzt 1.8.10 was originally released under the Business Source License 1.1 with a
 Change Date of 2026-01-01, on which date it converted to the Apache License,
 Version 2.0. A copy of the Apache License is available at:
-https://www.apache.org/licenses/LICENSE-2.0
+<https://www.apache.org/licenses/LICENSE-2.0>
 
 The following modifications were made to libzt source files:
 
@@ -44,7 +44,7 @@ The following modifications were made to libzt source files:
     ZTS_ERR_GENERAL (function unused by this application; C25519 API removed
     in ZeroTierOne 1.16.0).
 
-Modified source is available at: https://github.com/Mo3he/Axis_Cam_ZeroTier
+Modified source is available at: <https://github.com/Mo3he/Axis_Cam_ZeroTier>
 
 This product includes software developed by ZeroTier, Inc.
 <https://github.com/zerotier/libzt>
@@ -56,7 +56,7 @@ This product includes software developed by ZeroTier, Inc.
 Copyright (c) 2001, 2002 Swedish Institute of Computer Science
 BSD License
 
-```
+```text
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
@@ -89,7 +89,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Copyright (c) 2021 biaks (ianiskr@gmail.com)
 MIT License
 
-```
+```text
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
