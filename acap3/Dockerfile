@@ -12,7 +12,7 @@ WORKDIR /opt/app
 RUN cp html/index.html index.html
 
 # Patch the version placeholder in package.conf (ACAP3 uses major.minor.patch)
-ARG ACAP_VERSION=1.16.9
+ARG ACAP_VERSION=1.16.10
 RUN sed -i "s/VERSION=BUILDVER/VERSION=${ACAP_VERSION}/" package.conf
 
 # Build the main ACAP binary (config_bridge.c)

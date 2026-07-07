@@ -1,11 +1,11 @@
 {
-    "schemaVersion": "1.7.0",
+    "schemaVersion": "2.0.0",
     "acapPackageConf": {
         "setup": {
             "friendlyName": "ZeroTier VPN",
             "appName": "ZeroTier_VPN",
             "vendor": "Mo3he",
-            "embeddedSdkVersion": "3.0",
+            "vendorId": "5741c1fb91",
             "vendorUrl": "https://github.com/Mo3he/Axis_Cam_ZeroTier",
             "runMode": "respawn",
             "version": "BUILDVER",
@@ -13,7 +13,12 @@
                 "group": "sdk",
                 "username": "sdk"
             },
-            "architecture": "BUILDARCH"
+            "architecture": "BUILDARCH",
+            "compatibleOsVersions": [
+                {
+                    "max": "13"
+                }
+            ]
         },
         "configuration": {
             "settingPage": "index.html",

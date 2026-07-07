@@ -10,7 +10,7 @@ COPY ./app /opt/app/
 WORKDIR /opt/app
 
 # Patch the architecture and version placeholders in manifest.json
-ARG ACAP_VERSION=1.16.9
+ARG ACAP_VERSION=1.16.10
 RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json && \
     sed -i "s/BUILDVER/${ACAP_VERSION}/" manifest.json
 
@@ -26,6 +26,7 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
         /tmp/libzt/build/lib/libzt.a \
         -lstdc++ -lpthread -lm \
         -static \
+        -Wl,-z,noexecstack \
         -o lib/zerotier-userspace && \
     chmod 755 lib/zerotier-userspace
 RUN . /opt/axis/acapsdk/environment-setup* && \

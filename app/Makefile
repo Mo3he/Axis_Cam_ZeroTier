@@ -8,6 +8,9 @@ PKGS = glib-2.0 gio-2.0 axparameter
 CFLAGS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(PKGS))
 LDLIBS += $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(PKGS))
 
+# OS 13 rejects binaries with an executable stack.
+LDFLAGS += -Wl,-z,noexecstack
+
 CFLAGS += -Wall \
           -Wextra \
           -Wformat=2 \

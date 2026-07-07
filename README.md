@@ -2,12 +2,12 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application, enabling secure remote access without requiring any other equipment or network configuration. ZeroTier achieves this in a secure, simple, and lightweight way.
 
-Current version: **1.16.9**
+Current version: **1.16.10**
 
 The app runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
 - **No root required** — runs as the standard unprivileged `sdk` ACAP user (ACAP 4 builds)
-- **Compatible with Axis OS 9.x through 12** — see the Compatibility section below
+- **Compatible with Axis OS 9.x through 13** — see the Compatibility section below
 - **No kernel TUN device** — all networking is handled inside the process
 
 Download the pre-built `.eap` for your camera's architecture from the
@@ -24,9 +24,15 @@ and install via the camera's web interface under **Apps → Add app**.
 
 | Build | Axis OS | Architecture | File |
 |---|---|---|---|
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | aarch64 | `ZeroTier_VPN_1_16_8_aarch64.eap` |
-| ACAP 4 native SDK | 11.11+ (incl. OS 12) | armv7hf | `ZeroTier_VPN_1_16_8_armv7hf.eap` |
-| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_8_armv7hf_acap3.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | aarch64 | `ZeroTier_VPN_1_16_10_aarch64.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | armv7hf | `ZeroTier_VPN_1_16_10_armv7hf.eap` |
+| ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_10_armv7hf_acap3.eap` |
+
+The ACAP 4 build is compiled against the current Native SDK (64-bit `time_t`),
+ships a Manifest Schema v2 with `compatibleOsVersions` up to OS 13, and passes
+the OS 13 executable-stack check, so it survives the OS 13 upgrade. The declared
+compatibility floor is not enforced below OS 12.10, so the same build still
+installs down to OS 10.x.
 
 The ACAP 3 build targets cameras with `EmbeddedDevelopment.Version=2.x` (e.g. M1065-LW, M4206-V).
 Cameras on Axis OS 6.x or earlier (EmbeddedDevelopment 1.x) are not supported.
