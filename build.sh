@@ -3,8 +3,13 @@ set -eu
 
 REPO_ROOT=$(cd -P "$(dirname "$0")" && pwd)
 
-# Auto-detect container runtime (prefer docker if daemon is running, fall back to podman)
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+# Auto-detect container runtime. Honor an explicit RUNTIME override
+# (RUNTIME=docker|podman); otherwise prefer docker if its daemon is running and
+# fall back to podman.
+# Usage: ./build.sh [aarch64|armv7hf ...] [--build-base]   (default: both)
+if [ -n "${RUNTIME:-}" ]; then
+    CTR="$RUNTIME"
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     CTR=docker
 elif command -v podman >/dev/null 2>&1; then
     CTR=podman
@@ -26,11 +31,16 @@ if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
 # Pass --build-base to force a rebuild of the base (needed when upgrading
 # LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version).
 FORCE_BASE=0
+ARCHS=''
 for arg in "$@"; do
-    [ "$arg" = '--build-base' ] && FORCE_BASE=1
+    case "$arg" in
+        --build-base) FORCE_BASE=1 ;;
+        *) ARCHS="${ARCHS} $arg" ;;
+    esac
 done
+[ -z "$ARCHS" ] && ARCHS='aarch64 armv7hf'
 
-for ARCH in aarch64 armv7hf; do
+for ARCH in $ARCHS; do
     BASE_TAG="zerotier-libzt-base-${ARCH}"
     if [ "$FORCE_BASE" = '1' ] || ! ${CTR} image exists "${BASE_TAG}" 2>/dev/null; then
         echo "==> Building libzt base for ${ARCH} (one-time, ~10-20 min)..."
@@ -48,7 +58,7 @@ done
 echo '==> Cleaning old .eap files...'
 rm -f "$REPO_ROOT"/*.eap
 
-for ARCH in aarch64 armv7hf; do
+for ARCH in $ARCHS; do
     echo "==> Building ${ARCH}..."
     ${CTR} build ${BUILD_FLAGS} --build-arg ARCH="${ARCH}" --tag "zerotier-vpn-${ARCH}" "$REPO_ROOT"
 
