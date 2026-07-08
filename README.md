@@ -16,7 +16,7 @@ and install via the camera's web interface under **Apps → Add app**.
 
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange?style=flat&logo=buy-me-a-coffee)](https://www.buymeacoffee.com/mo3he)
 
-> **Disclaimer:** This is an independent, community-developed ACAP package and is not an official Axis Communications product. It is not affiliated with, endorsed by, or supported by Axis Communications AB. Use it at your own risk. For official Axis software, visit axis.com 
+> **Disclaimer:** This is an independent, community-developed ACAP package and is not an official Axis Communications product. It is not affiliated with, endorsed by, or supported by Axis Communications AB. Use it at your own risk. For official Axis software, visit axis.com
 
 > **ZeroTier Notice:** ZeroTier is a product of ZeroTier, Inc. This package independently redistributes ZeroTier components (ZeroTierOne, libzt, lwIP) under their respective licenses (MPL 2.0, Apache 2.0, BSD 3-Clause — see [LICENSE](LICENSE)) and is not affiliated with, endorsed by, or supported by ZeroTier, Inc. For the official ZeroTier client, visit [zerotier.com](https://zerotier.com).
 
@@ -38,7 +38,8 @@ The ACAP 3 build targets cameras with `EmbeddedDevelopment.Version=2.x` (e.g. M1
 Cameras on Axis OS 6.x or earlier (EmbeddedDevelopment 1.x) are not supported.
 
 To check your camera's OS and EmbeddedDevelopment version:
-```
+
+```sh
 curl --digest -u <username>:<password> \
   "http://<device-ip>/axis-cgi/param.cgi?action=list&group=root.EmbeddedDevelopment"
 ```
@@ -70,20 +71,23 @@ and install via the camera's web interface under Apps → Add app.
 The Network ID can be set programmatically using the camera's `param.cgi` endpoint.
 
 **Read the current Network ID:**
-```
+
+```sh
 curl --digest -u <username>:<password> \
   "http://<device-ip>/axis-cgi/param.cgi?action=list&group=root.ZeroTier_VPN.NetworkID"
 ```
 
 **Set a new Network ID:**
-```
+
+```sh
 curl --digest -u <username>:<password> \
   --data "action=update&root.ZeroTier_VPN.NetworkID=<16-char-hex-id>" \
   "http://<device-ip>/axis-cgi/param.cgi"
 ```
 
 **Clear the Network ID** (disconnects from ZeroTier):
-```
+
+```sh
 curl --digest -u <username>:<password> \
   --data "action=update&root.ZeroTier_VPN.NetworkID=" \
   "http://<device-ip>/axis-cgi/param.cgi"
@@ -122,24 +126,28 @@ automatically falls back to the next available port (8181/8282/8383 for HTTP,
 Requires Docker or Podman. The build scripts auto-detect which is available.
 Two separate build scripts cover the two SDK generations.
 
-The slow step (cloning and compiling [libzt](https://github.com/zerotier/libzt)
-+ ZeroTierOne) is isolated into a **base image** that is built once and reused
+The slow step (cloning and compiling
+[libzt](https://github.com/zerotier/libzt) - ZeroTierOne) is isolated into a
+**base image** that is built once and reused
 on every subsequent rebuild. After the first run, rebuilding after a code change
 takes under a minute.
 
 **ACAP 4 native SDK (Axis OS 11.11+, aarch64 + armv7hf):**
-```
+
+```sh
 ./build.sh
 ```
 
 **ACAP 3 SDK (Axis OS 9.x – 10.x, armv7hf only):**
-```
+
+```sh
 ./acap3/build.sh
 ```
 
 To force a rebuild of the libzt base images (e.g. after upgrading libzt or the
 SDK version), pass `--build-base`:
-```
+
+```sh
 ./build.sh --build-base
 ./acap3/build.sh --build-base
 ```

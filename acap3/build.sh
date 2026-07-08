@@ -8,12 +8,12 @@ VERSION=1.16.10
 
 # Auto-detect container runtime (prefer docker if daemon is running, fall back to podman)
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    CTR=docker
+	CTR=docker
 elif command -v podman >/dev/null 2>&1; then
-    CTR=podman
+	CTR=podman
 else
-    echo 'Error: neither docker (with running daemon) nor podman found' >&2
-    exit 1
+	echo 'Error: neither docker (with running daemon) nor podman found' >&2
+	exit 1
 fi
 echo "==> Using container runtime: ${CTR}"
 
@@ -30,17 +30,17 @@ if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
 # ZT_CORE_VERSION, or the SDK image version).
 FORCE_BASE=0
 for arg in "$@"; do
-    [ "$arg" = '--build-base' ] && FORCE_BASE=1
+	[ "$arg" = '--build-base' ] && FORCE_BASE=1
 done
 
 if [ "$FORCE_BASE" = '1' ] || ! ${CTR} image exists 'zerotier-libzt-base-acap3' 2>/dev/null; then
-    echo '==> Building libzt base for ACAP 3 armv7hf (one-time, ~10-20 min)...'
-    ${CTR} build ${BUILD_FLAGS} \
-        --tag 'zerotier-libzt-base-acap3' \
-        -f "$REPO_ROOT/Dockerfile.libzt" \
-        "$REPO_ROOT"
+	echo '==> Building libzt base for ACAP 3 armv7hf (one-time, ~10-20 min)...'
+	${CTR} build ${BUILD_FLAGS} \
+		--tag 'zerotier-libzt-base-acap3' \
+		-f "$REPO_ROOT/Dockerfile.libzt" \
+		"$REPO_ROOT"
 else
-    echo '==> libzt base for ACAP 3 already built — skipping'
+	echo '==> libzt base for ACAP 3 already built — skipping'
 fi
 
 # Remove old acap3 .eap files from the parent repo root so only fresh ones remain
@@ -55,7 +55,7 @@ CID=$(${CTR} create 'zerotier-vpn-acap3-armv7hf')
 ${CTR} cp "${CID}":/opt/app/ "${TMPBASE}/acap3-out"
 # Rename to consistent naming scheme regardless of what create-package.sh calls it
 find "${TMPBASE}/acap3-out" -name '*.eap' -exec cp {} \
-    "$PARENT_ROOT/ZeroTier_VPN_$(echo "${VERSION}" | tr '.' '_')_armv7hf_acap3.eap" \;
+	"$PARENT_ROOT/ZeroTier_VPN_$(echo "${VERSION}" | tr '.' '_')_armv7hf_acap3.eap" \;
 ${CTR} rm "${CID}" >/dev/null
 rm -rf "${TMPBASE}/acap3-out"
 

@@ -86,7 +86,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## prometheus-cpp-lite
 
-Copyright (c) 2021 biaks (ianiskr@gmail.com)
+Copyright (c) 2021 biaks (<ianiskr@gmail.com>)
 MIT License
 
 ```text
