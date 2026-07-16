@@ -372,6 +372,20 @@ static void *port_forwarder(void *arg) {
             continue;
         }
 
+        /* Clear the connect timeouts — they must not apply to the relay, or an
+           idle keep-alive connection would be torn down after 10 s of silence,
+           bouncing the web UI back to "System is getting ready". */
+        struct timeval no_tv = { .tv_sec = 0, .tv_usec = 0 };
+        setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &no_tv, sizeof(no_tv));
+        setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &no_tv, sizeof(no_tv));
+
+        /* Enable TCP keepalive so a peer that vanishes without a clean FIN is
+           eventually reaped instead of leaking a relay thread + fds forever. */
+        int keepalive = 1;
+        setsockopt(local, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+        zts_bsd_setsockopt(client, ZTS_SOL_SOCKET, ZTS_SO_KEEPALIVE,
+                           &keepalive, sizeof(keepalive));
+
         /* Spawn relay threads */
         relay_ctx_t *rctx = malloc(sizeof(*rctx));
         if (!rctx) {
@@ -484,6 +498,19 @@ static void *handle_socks5(void *arg) {
         zts_bsd_write(zt_fd, err, sizeof(err));
         goto fail;
     }
+
+    /* Clear the connect timeouts — they must not apply to the relay, or an
+       idle keep-alive connection would be torn down after 10 s of silence. */
+    struct timeval no_tv = { .tv_sec = 0, .tv_usec = 0 };
+    setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &no_tv, sizeof(no_tv));
+    setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &no_tv, sizeof(no_tv));
+
+    /* Enable TCP keepalive so a peer that vanishes without a clean FIN is
+       eventually reaped instead of leaking a relay thread + fds forever. */
+    int keepalive = 1;
+    setsockopt(local, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+    zts_bsd_setsockopt(zt_fd, ZTS_SOL_SOCKET, ZTS_SO_KEEPALIVE,
+                       &keepalive, sizeof(keepalive));
 
     /* Success reply */
     unsigned char ok[] = {

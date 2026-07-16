@@ -5,6 +5,15 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.16.12] - 2026-07-16 - Fix web UI dropping to "System is getting ready"
+
+- Fix: the web interface no longer intermittently reverts to the "System is
+  getting ready" screen when accessed over the ZeroTier IP. The relay was
+  applying its 10 s connect timeout to established connections, tearing down
+  idle keep-alive/websocket connections after 10 s of silence (issue #7).
+- TCP keepalive is now enabled on both relay sockets so peers that vanish
+  without a clean close are still reaped.
+
 ## [1.16.11] - 2026-07-16 - Managed route gateway support
 
 - Reach devices on subnets behind a ZeroTier gateway (e.g. a VMS on a routed

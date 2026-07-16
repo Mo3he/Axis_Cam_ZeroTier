@@ -10,7 +10,7 @@ COPY ./app /opt/app/
 WORKDIR /opt/app
 
 # Patch the architecture and version placeholders in manifest.json
-ARG ACAP_VERSION=1.16.11
+ARG ACAP_VERSION=1.16.12
 RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json && \
     sed -i "s/BUILDVER/${ACAP_VERSION}/" manifest.json
 
