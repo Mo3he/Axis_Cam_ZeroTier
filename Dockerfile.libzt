@@ -28,7 +28,10 @@ RUN git clone --branch ${LIBZT_VERSION} \
     sed -i '/include_directories(\${ZTO_SRC_DIR}\/ext\/libnatpmp)/a include_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/core\/include)\ninclude_directories(\${ZTO_SRC_DIR}\/ext\/prometheus-cpp-lite-1.0\/simpleapi\/include)' CMakeLists.txt && \
     sed -i 's|_node = new Node(this, (void\*)0, \&cb, OSUtils::now());|ZT_Node_Config ztcfg = {}; _node = new Node(this, (void*)0, \&ztcfg, \&cb, OSUtils::now());|' src/NodeService.cpp && \
     printf 'import sys\ns=open("src/Utilities.cpp").read()\ns=s.replace("#include <node/C25519.hpp>","#include <node/ECC.hpp>")\ns=s.replace("#include <node/World.hpp>\\n","")\nstart=s.find("int zts_util_sign_root_set(")\nbrace=s.index("{",start)\nd,i=0,brace\nwhile i<len(s):\n    if s[i]=="{":d+=1\n    elif s[i]=="}":d-=1\n    if d==0:break\n    i+=1\ns=s[:brace]+"{ return ZTS_ERR_GENERAL; }"+s[i+1:]\nopen("src/Utilities.cpp","w").write(s)\n' > /tmp/patch_utils.py && \
-    python3 /tmp/patch_utils.py
+    python3 /tmp/patch_utils.py && \
+    sed -i 's|#include "VirtualTap.hpp"|#include "VirtualTap.hpp"\n#include <cstdlib>|' src/VirtualTap.cpp && \
+    sed -i 's|IP4_ADDR(&gw, 127, 0, 0, 1);|IP4_ADDR(\&gw, 127, 0, 0, 1); { const char* __ztsgw = ::getenv("ZTS_LWIP_DEFAULT_GW4"); ip4_addr_t __ztg; if (__ztsgw \&\& __ztsgw[0] \&\& ip4addr_aton(__ztsgw, \&__ztg)) { gw = __ztg; } }|' src/VirtualTap.cpp && \
+    sed -i 's|vtap->netif4 = (void\*)n;|vtap->netif4 = (void*)n; { const char* __ztsgw2 = ::getenv("ZTS_LWIP_DEFAULT_GW4"); if (__ztsgw2 \&\& __ztsgw2[0]) { netif_set_up(n); netif_set_link_up(n); netif_set_default(n); } }|' src/VirtualTap.cpp
 
 # Write a cmake toolchain file for cross-compilation, then build libzt.
 # MAKE_JOBS: cap parallel C++ jobs to avoid OOM in memory-constrained envs.

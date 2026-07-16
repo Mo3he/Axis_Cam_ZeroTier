@@ -5,6 +5,18 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.16.11] - 2026-07-16 - Managed route gateway support
+
+- Reach devices on subnets behind a ZeroTier gateway (e.g. a VMS on a routed
+  LAN), not just direct ZeroTier members. The userspace stack now routes
+  off-subnet traffic through a gateway member.
+- Auto-detects the gateway from the network's managed routes, or set it
+  explicitly via the new **Managed Routes (Advanced)** setting.
+- Managed routes and the active gateway are shown in the status page for
+  troubleshooting.
+- Fix: changing the Network ID now cleanly restarts the service so the new
+  network is always joined.
+
 ## [1.16.10] - 2026-07-07
 
 ## [1.16.9] - 2026-04-25
@@ -35,6 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [1.10.6] - 2023-07-07 - Static binaries from source
 
+[1.16.11]: https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/tag/v1.16.11
 [1.16.10]: https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/tag/v1.16.10
 [1.16.9]: https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/tag/v1.16.9
 [1.16.8]: https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/tag/v1.16.8

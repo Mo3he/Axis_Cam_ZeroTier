@@ -42,6 +42,11 @@
                     "name": "SOCKS5ProxyPort",
                     "default": "1080",
                     "type": "string"
+                },
+                {
+                    "name": "ManagedGateway",
+                    "default": "",
+                    "type": "string"
                 }
             ]
         }

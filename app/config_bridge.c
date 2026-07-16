@@ -255,6 +255,7 @@ static void update_config_file(AXParameter *handle) {
     gchar *network_id = NULL;
     gchar *http_port = NULL;
     gchar *socks5_port = NULL;
+    gchar *managed_gateway = NULL;
 
     if (!ax_parameter_get(handle, "NetworkID", &network_id, &error)) {
         if (error) { g_error_free(error); error = NULL; }
@@ -268,6 +269,11 @@ static void update_config_file(AXParameter *handle) {
         if (error) { g_error_free(error); error = NULL; }
         socks5_port = g_strdup("1080");
     }
+    if (!ax_parameter_get(handle, "ManagedGateway", &managed_gateway, &error)) {
+        if (error) { g_error_free(error); error = NULL; }
+        managed_gateway = g_strdup("");
+    }
+    if (managed_gateway) g_strstrip(managed_gateway);
 
     /* Basic validation — fall back to defaults if non-numeric */
     int hp = http_port  ? atoi(http_port)  : 0;
@@ -280,6 +286,7 @@ static void update_config_file(AXParameter *handle) {
         fprintf(f, "network_id=%s\n", network_id   ? network_id   : "");
         fprintf(f, "http_proxy_port=%s\n", http_port   ? http_port   : "8080");
         fprintf(f, "socks5_proxy_port=%s\n", socks5_port ? socks5_port : "1080");
+        fprintf(f, "managed_gateway=%s\n", managed_gateway ? managed_gateway : "");
         fclose(f);
         chmod(CONFIG_FILE, 0600);
         syslog(LOG_INFO, "config updated (network_id=%s http_port=%s socks5_port=%s)",
@@ -292,6 +299,7 @@ static void update_config_file(AXParameter *handle) {
     g_free(network_id);
     g_free(http_port);
     g_free(socks5_port);
+    g_free(managed_gateway);
 }
 
 /* ── ACAP parameter callback ─────────────────────────────────────── */
@@ -324,10 +332,14 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
 
     syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    /* PlanetFile, HTTPProxyPort, SOCKS5ProxyPort require a full restart. */
-    if (strcmp(short_name, "PlanetFile")      == 0 ||
+    /* These require a full restart of the proxy. NetworkID is included because
+     * switching networks via an in-place SIGUSR1 reload does not reliably tear
+     * down and rejoin — a clean restart guarantees the new network is joined. */
+    if (strcmp(short_name, "NetworkID")       == 0 ||
+        strcmp(short_name, "PlanetFile")      == 0 ||
         strcmp(short_name, "HTTPProxyPort")   == 0 ||
-        strcmp(short_name, "SOCKS5ProxyPort") == 0) {
+        strcmp(short_name, "SOCKS5ProxyPort") == 0 ||
+        strcmp(short_name, "ManagedGateway")  == 0) {
         pending_full_restart = TRUE;
     }
     /* Coalesce rapid multi-param saves into one restart 300 ms after the last
@@ -369,7 +381,7 @@ int main(void) {
     start_proxy();
 
     /* Register callbacks for every parameter */
-    const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort" };
+    const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ManagedGateway" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
                                             parameter_changed, handle, &error)) {

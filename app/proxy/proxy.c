@@ -98,6 +98,12 @@ static uint64_t current_nwid = 0;
  * http_port:  actual bound HTTP proxy port (0 = not bound)
  * socks5_port: actual bound outbound SOCKS5 port (0 = not bound)
  */
+/* Active managed-route gateway (empty = none) and a JSON array of the
+   ZeroTier-pushed routes, refreshed after each (re)join and surfaced in the
+   status file for troubleshooting. Written only from the main thread. */
+static char g_gateway_str[ZTS_IP_MAX_STR_LEN] = {0};
+static char g_routes_json[1024] = "[]";
+
 static void write_status(const char *state, const char *node_id,
                          const char *zt_ip, const char *network_id,
                          int http_port, int socks5_port)
@@ -112,6 +118,8 @@ static void write_status(const char *state, const char *node_id,
         "  \"network_id\": \"%s\",\n"
         "  \"http_port\": %d,\n"
         "  \"socks5_port\": %d,\n"
+        "  \"gateway\": \"%s\",\n"
+        "  \"routes\": %s,\n"
         "  \"ts\": %ld\n"
         "}\n",
         state,
@@ -119,10 +127,70 @@ static void write_status(const char *state, const char *node_id,
         zt_ip      ? zt_ip      : "",
         network_id ? network_id : "",
         http_port, socks5_port,
+        g_gateway_str,
+        g_routes_json,
         (long)time(NULL));
     fclose(f);
     rename(STATUS_FILE_TMP, STATUS_FILE);
     chmod(STATUS_FILE, 0644);
+}
+
+/*
+ * Query the ZeroTier-pushed managed routes for a network, record them as a
+ * JSON array in g_routes_json (for the UI), and return the best gateway to use
+ * as the userspace default route via gw_out. Prefers the gateway of a default
+ * route (0.0.0.0/0), otherwise the first route that carries a "via" gateway.
+ */
+static void refresh_managed_routes(uint64_t nwid, char *gw_out, size_t gw_len) {
+    if (gw_out && gw_len) gw_out[0] = '\0';
+
+    char json[1024];
+    size_t off = 0;
+    off += snprintf(json + off, sizeof(json) - off, "[");
+
+    char best_gw[ZTS_IP_MAX_STR_LEN] = {0};
+    int  have_default = 0;
+    int  wrote = 0;
+
+    if (zts_core_lock_obtain() == ZTS_ERR_OK) {
+        int count = zts_core_query_route_count(nwid);
+        for (int i = 0; i < count; i++) {
+            char target[ZTS_IP_MAX_STR_LEN] = {0};
+            char via[ZTS_IP_MAX_STR_LEN]    = {0};
+            uint16_t flags = 0, metric = 0;
+            if (zts_core_query_route(nwid, i, target, via,
+                                     ZTS_IP_MAX_STR_LEN, &flags, &metric) != ZTS_ERR_OK)
+                continue;
+
+            /* via "0.0.0.0" (family 0) means the route is LAN-local with no
+               gateway — it must not be treated as one. */
+            const char *via_gw = (via[0] && strcmp(via, "0.0.0.0") != 0) ? via : "";
+
+            if (off < sizeof(json) - 2)
+                off += snprintf(json + off, sizeof(json) - off,
+                                "%s{\"target\":\"%s\",\"via\":\"%s\"}",
+                                (wrote++ ? "," : ""), target, via_gw);
+
+            if (via_gw[0]) {
+                if (strncmp(target, "0.0.0.0", 7) == 0 && !have_default) {
+                    snprintf(best_gw, sizeof(best_gw), "%s", via_gw);
+                    have_default = 1;
+                } else if (!best_gw[0]) {
+                    snprintf(best_gw, sizeof(best_gw), "%s", via_gw);
+                }
+            }
+        }
+        zts_core_lock_release();
+    }
+
+    if (off < sizeof(json) - 2)
+        snprintf(json + off, sizeof(json) - off, "]");
+    else
+        snprintf(json, sizeof(json), "[]");
+
+    snprintf(g_routes_json, sizeof(g_routes_json), "%s", json);
+    if (gw_out && best_gw[0])
+        snprintf(gw_out, gw_len, "%s", best_gw);
 }
 
 /* ── config ──────────────────────────────────────────────────────── */
@@ -131,6 +199,8 @@ typedef struct {
     char network_id[20];    /* 16-hex-char network ID */
     int  http_proxy_port;   /* loopback HTTP CONNECT proxy port */
     int  socks5_proxy_port; /* loopback outbound SOCKS5 port */
+    char managed_gateway[ZTS_IP_MAX_STR_LEN]; /* optional ZT gateway for routed
+                                                 subnets; empty = auto-detect */
 } config_t;
 
 static bool load_config(const char *path, config_t *cfg) {
@@ -173,6 +243,8 @@ static bool load_config(const char *path, config_t *cfg) {
         } else if (strcmp(key, "socks5_proxy_port") == 0) {
             int p = atoi(val);
             if (p > 0 && p <= 65535) cfg->socks5_proxy_port = p;
+        } else if (strcmp(key, "managed_gateway") == 0) {
+            snprintf(cfg->managed_gateway, sizeof(cfg->managed_gateway), "%s", val);
         }
     }
     fclose(f);
@@ -966,6 +1038,16 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        /* If a gateway is explicitly configured, make sure the userspace lwIP
+           stack will route off-subnet traffic through it. libzt reads this
+           env var when the network interface is created, so set it before we
+           join (auto-detected gateways are applied further below). */
+        if (cfg.managed_gateway[0]) {
+            const char *cur = getenv("ZTS_LWIP_DEFAULT_GW4");
+            if (!cur || strcmp(cur, cfg.managed_gateway) != 0)
+                setenv("ZTS_LWIP_DEFAULT_GW4", cfg.managed_gateway, 1);
+        }
+
         /* Leave old network if switching */
         if (current_nwid != 0 && current_nwid != nwid) {
             syslog(LOG_INFO, "Leaving network %llx", (unsigned long long)current_nwid);
@@ -1023,6 +1105,32 @@ int main(int argc, char *argv[]) {
         zts_addr_get_str(nwid, ZTS_AF_INET, zt_addr_str, sizeof(zt_addr_str));
         syslog(LOG_INFO, "Address assigned: %s on network %s",
                zt_addr_str, cfg.network_id);
+
+        /* Discover the ZeroTier-pushed managed routes and, if a gateway is
+           available, make lwIP route off-subnet traffic through it. The
+           gateway has to be known before the netif is created, so if it
+           changed we rejoin once to recreate the interface with the new
+           default gateway. */
+        {
+            char discovered_gw[ZTS_IP_MAX_STR_LEN] = {0};
+            refresh_managed_routes(nwid, discovered_gw, sizeof(discovered_gw));
+
+            const char *want_gw = cfg.managed_gateway[0]
+                                      ? cfg.managed_gateway : discovered_gw;
+            const char *have_gw = getenv("ZTS_LWIP_DEFAULT_GW4");
+            if (want_gw[0] && (!have_gw || strcmp(have_gw, want_gw) != 0)) {
+                setenv("ZTS_LWIP_DEFAULT_GW4", want_gw, 1);
+                snprintf(g_gateway_str, sizeof(g_gateway_str), "%s", want_gw);
+                syslog(LOG_INFO,
+                       "Managed gateway %s — rejoining to install route", want_gw);
+                zts_net_leave(nwid);
+                current_nwid = 0;
+                zts_util_delay(1500);
+                continue;
+            }
+            snprintf(g_gateway_str, sizeof(g_gateway_str), "%s",
+                     want_gw[0] ? want_gw : "");
+        }
 
         /* Start port forwarders */
         pthread_t fwd_threads[N_FORWARD_PORTS];

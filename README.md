@@ -2,7 +2,7 @@
 
 A ZeroTier VPN client that runs directly on Axis cameras as an ACAP application, enabling secure remote access without requiring any other equipment or network configuration. ZeroTier achieves this in a secure, simple, and lightweight way.
 
-Current version: **1.16.10**
+Current version: **1.16.11**
 
 The app runs entirely in userspace using [libzt](https://github.com/zerotier/libzt) (ZeroTier Sockets SDK + lwIP TCP/IP stack) with ZeroTierOne 1.16.0 as the core engine, which means:
 
@@ -24,8 +24,8 @@ and install via the camera's web interface under **Apps → Add app**.
 
 | Build | Axis OS | Architecture | File |
 |---|---|---|---|
-| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | aarch64 | `ZeroTier_VPN_1_16_10_aarch64.eap` |
-| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | armv7hf | `ZeroTier_VPN_1_16_10_armv7hf.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | aarch64 | `ZeroTier_VPN_1_16_11_aarch64.eap` |
+| ACAP 4 native SDK | 11.11+ (incl. OS 12 and 13) | armv7hf | `ZeroTier_VPN_1_16_11_armv7hf.eap` |
 | ACAP 3 SDK | 9.x – 10.x | armv7hf | `ZeroTier_VPN_1_16_10_armv7hf_acap3.eap` |
 
 The ACAP 4 build is compiled against the current Native SDK (64-bit `time_t`),
@@ -100,6 +100,40 @@ Once authorized, the camera will receive a ZeroTier IP address and all proxies
 and port forwarders will start automatically.
 
 When uninstalling the ACAP, all changes and files are removed from the camera.
+
+### Reaching routed subnets (managed routes)
+
+By default the camera can talk to other ZeroTier members directly. To let the
+camera reach devices on a **routed network behind a ZeroTier gateway** (for
+example a VMS or NVR on a separate LAN/VLAN), the app can route camera-initiated
+traffic for those subnets through the gateway.
+
+Requirements:
+
+- A **managed route** must be defined in your ZeroTier network config
+  (`<subnet> via <gateway-member-ip>`). This is configured in the controller —
+  ZeroTier Central (a plan that permits custom routes) or a self-hosted
+  controller. ZeroTier will not carry traffic to a subnet that has no managed
+  route, regardless of the app.
+- A ZeroTier member on the target network acting as the gateway for that subnet.
+
+Usage: open the app's settings page → **Managed Routes (Advanced)**.
+
+- Leave the gateway field **blank** to auto-detect it from the network's managed
+  routes (recommended).
+- Or enter the gateway member's ZeroTier IP explicitly.
+
+The installed managed routes and the active gateway are shown on the status page
+for troubleshooting. Camera-initiated connections to the routed subnet then flow
+out through the app's outbound proxies (HTTP CONNECT / SOCKS5) via ZeroTier.
+
+The gateway can also be set through the parameter API:
+
+```sh
+curl --digest -u <username>:<password> \
+  --data "action=update&root.ZeroTier_VPN.ManagedGateway=<gateway-ip>" \
+  "http://<device-ip>/axis-cgi/param.cgi"
+```
 
 ## How it works
 

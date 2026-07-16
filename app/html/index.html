@@ -401,6 +401,25 @@
     <div class="config-msg" id="port-msg"></div>
 </div>
 
+<!-- Managed Routes (Advanced) -->
+<div class="card">
+    <div class="card-title">Managed Routes (Advanced)</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+        Reach devices on a subnet behind a ZeroTier gateway (e.g. a VMS on a
+        routed LAN). Leave the gateway blank to auto-detect it from the
+        network's managed routes. A ZeroTier member on the target network must
+        be configured as the gateway for that subnet.
+    </div>
+    <div class="config-row">
+        <input class="config-input" id="gw-input" type="text"
+               placeholder="ZeroTier gateway IP (blank = auto)"
+               autocomplete="off" spellcheck="false" />
+        <button class="config-btn" id="gw-save">Save</button>
+    </div>
+    <div class="config-msg" id="gw-msg"></div>
+    <div id="routes-box" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);"></div>
+</div>
+
 <!-- Planet File -->
 <div class="card">
     <div class="card-title">Custom Planet (Self-Hosted Controller)</div>
@@ -578,7 +597,8 @@
             cacheSet('network', net);
             cacheSet('httpPort', hp); cacheSet('socks5OutPort', sp);
             return { state: 'connected', ip: ip, node: node, network: net,
-                     httpPort: hp, socks5OutPort: sp };
+                     httpPort: hp, socks5OutPort: sp,
+                     gateway: s.gateway || null, routes: s.routes || [] };
         }
         if (s.state === 'waiting_auth') {
             return { state: 'connecting', ip: null, node: node, network: net,
@@ -732,6 +752,22 @@
         } else {
             info.style.display = 'none';
             proxy.style.display = 'none';
+        }
+
+        var routesBox = document.getElementById('routes-box');
+        if (routesBox) {
+            if (r.state === 'connected' && r.routes && r.routes.length) {
+                var rh = '<div style="margin-bottom:4px;color:var(--text);">Managed routes'
+                       + (r.gateway ? ' · active gateway ' + escHtml(r.gateway) : '')
+                       + ':</div>';
+                rh += r.routes.map(function(rt) {
+                    return '· ' + escHtml(rt.target || '')
+                         + (rt.via ? ' via ' + escHtml(rt.via) : ' (LAN-local)');
+                }).join('<br>');
+                routesBox.innerHTML = rh;
+            } else {
+                routesBox.textContent = '';
+            }
         }
 
         var now = new Date();
@@ -1013,6 +1049,51 @@
         savePort('SOCKS5ProxyPort', socks5PortInput.value, socks5PortSave);
     });
 
+    // Managed route gateway (advanced)
+    var gwInput = document.getElementById('gw-input');
+    var gwSave  = document.getElementById('gw-save');
+    var gwMsg   = document.getElementById('gw-msg');
+
+    function setGwMsg(t, c) {
+        gwMsg.textContent = t;
+        gwMsg.className = 'config-msg ' + (c || '');
+    }
+
+    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.ManagedGateway',
+          { cache: 'no-store', credentials: 'same-origin' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            var m = txt.match(/ManagedGateway=([^\r\n]*)/);
+            if (m) gwInput.value = m[1].trim();
+        })
+        .catch(function() {});
+
+    gwSave.addEventListener('click', function() {
+        var val = gwInput.value.trim();
+        if (val !== '' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(val)) {
+            setGwMsg('Enter a valid IPv4 address, or leave blank to auto-detect.', 'err');
+            return;
+        }
+        gwSave.disabled = true;
+        setGwMsg('Saving…');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.ManagedGateway=' + encodeURIComponent(val)
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) {
+                setGwMsg('Saved — proxy restarting…', 'ok');
+            } else {
+                setGwMsg('Error: ' + txt.trim(), 'err');
+            }
+        })
+        .catch(function(e) { setGwMsg('Request failed: ' + e, 'err'); })
+        .finally(function() { gwSave.disabled = false; });
+    });
+
     // Check for updates from GitHub
     function checkForUpdate(manual) {
         var btn = document.getElementById('check-update-btn');
@@ -1022,7 +1103,7 @@
             .then(function(data) {
                 var tag = (data.tag_name || '').replace(/^v/, '');
                 if (!tag) return;
-                if (compareVersions(tag, '1.16.10') > 0) {
+                if (compareVersions(tag, '1.16.11') > 0) {
                     document.getElementById('update-version').textContent = 'v' + tag;
                     document.getElementById('update-banner').classList.add('visible');
                     if (btn) btn.textContent = 'Update Available';
