@@ -831,6 +831,75 @@
 
     // Network ID config
     var PARAM_URL = '/axis-cgi/param.cgi';
+
+    // param.cgi is used when available; on devices that lack it (e.g. some
+    // recorder/NVR- and access-control-class devices) we fall back to the app's
+    // own endpoint, exposed through the manifest reverseProxy mapping at API_URL.
+    var API_URL = '/local/' + APP + '/api/settings';
+
+    // Parse param.cgi "action=list" output into a normalized object. The _any
+    // flag distinguishes real param.cgi output from a generic 404 page.
+    function parseParamText(txt) {
+        var out = { _any: false };
+        ['NetworkID', 'PlanetFile', 'HTTPProxyPort', 'SOCKS5ProxyPort', 'ManagedGateway']
+            .forEach(function(n) {
+                var m = txt.match(new RegExp('(?:^|\\.)' + n + '=([^\\r\\n]*)', 'm'));
+                if (m) { out[n] = m[1].trim(); out._any = true; }
+            });
+        return out;
+    }
+
+    // Load all params once (memoized). Tries param.cgi, then falls back to the
+    // app endpoint. Resolves to an object keyed by parameter name.
+    var _paramsPromise = null;
+    function getParamsOnce() {
+        if (_paramsPromise) return _paramsPromise;
+        _paramsPromise = fetch(PARAM_URL + '?action=list&group=root.' + APP,
+                { cache: 'no-store', credentials: 'same-origin' })
+            .then(function(r) { return r.ok ? r.text() : Promise.reject(); })
+            .then(function(txt) {
+                var p = parseParamText(txt);
+                if (!p._any) return Promise.reject();
+                return p;
+            })
+            .catch(function() {
+                return fetch(API_URL + '?t=' + Date.now(),
+                        { cache: 'no-store', credentials: 'same-origin' })
+                    .then(function(r) { return r.ok ? r.json() : {}; })
+                    .then(function(obj) { return obj || {}; })
+                    .catch(function() { return {}; });
+            });
+        return _paramsPromise;
+    }
+
+    // Save a single parameter. Tries param.cgi, and on transport failure (the
+    // endpoint is absent on recorder/access-control devices) falls back to the
+    // app endpoint. Resolves to { ok: bool, msg?: string }.
+    function saveParam(name, value) {
+        return fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.' + name + '=' + encodeURIComponent(value)
+        })
+        .then(function(r) { return r.ok ? r.text() : Promise.reject('unavailable'); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) return { ok: true };
+            return { ok: false, msg: txt.trim() };
+        })
+        .catch(function() {
+            return fetch(API_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: name + '=' + encodeURIComponent(value)
+            })
+            .then(function(r) { return r.ok ? r.text() : Promise.reject(); })
+            .then(function(txt) { return /OK/.test(txt) ? { ok: true } : { ok: false, msg: 'save failed' }; })
+            .catch(function() { return { ok: false, msg: 'request failed' }; });
+        });
+    }
+
     var nwidInput = document.getElementById('nwid-input');
     var nwidSave  = document.getElementById('nwid-save');
     var nwidMsg   = document.getElementById('nwid-msg');
@@ -841,14 +910,9 @@
     }
 
     // Load current value
-    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.NetworkID',
-          { cache: 'no-store', credentials: 'same-origin' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            var m = txt.match(/NetworkID=(.+)/);
-            if (m) nwidInput.value = m[1].trim();
-        })
-        .catch(function() {});
+    getParamsOnce().then(function(p) {
+        if (typeof p.NetworkID === 'string') nwidInput.value = p.NetworkID;
+    });
 
     nwidSave.addEventListener('click', function() {
         var val = nwidInput.value.trim();
@@ -858,19 +922,10 @@
         }
         nwidSave.disabled = true;
         setMsg('Saving…');
-        fetch(PARAM_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=update&root.' + APP + '.NetworkID=' + encodeURIComponent(val)
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            if (/^OK/.test(txt.trim())) {
-                setMsg('Saved — reconnecting…', 'ok');
-            } else {
-                setMsg('Error: ' + txt.trim(), 'err');
-            }
+        saveParam('NetworkID', val)
+        .then(function(res) {
+            if (res.ok) setMsg('Saved — reconnecting…', 'ok');
+            else setMsg('Error: ' + (res.msg || 'save failed'), 'err');
         })
         .catch(function(e) { setMsg('Request failed: ' + e, 'err'); })
         .finally(function() { nwidSave.disabled = false; });
@@ -901,15 +956,9 @@
     }
 
     // Load current planet state
-    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.PlanetFile',
-          { cache: 'no-store', credentials: 'same-origin' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            var m = txt.match(/PlanetFile=(.*)/);
-            var hasCustom = m && m[1].trim().length > 0;
-            setPlanetStatus(hasCustom);
-        })
-        .catch(function() { setPlanetStatus(false); });
+    getParamsOnce().then(function(p) {
+        setPlanetStatus(typeof p.PlanetFile === 'string' && p.PlanetFile.length > 0);
+    });
 
     var selectedPlanetBytes = null;
 
@@ -945,21 +994,15 @@
         var b64 = arrayBufferToBase64(selectedPlanetBytes);
         planetSave.disabled = true;
         setPlanetMsg('Uploading…');
-        fetch(PARAM_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=update&root.' + APP + '.PlanetFile=' + encodeURIComponent(b64)
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            if (/^OK/.test(txt.trim())) {
+        saveParam('PlanetFile', b64)
+        .then(function(res) {
+            if (res.ok) {
                 setPlanetMsg('Planet file saved — proxy restarting…', 'ok');
                 setPlanetStatus(true);
                 selectedPlanetBytes = null;
                 planetLabel.textContent = 'Choose planet file…';
             } else {
-                setPlanetMsg('Error: ' + txt.trim(), 'err');
+                setPlanetMsg('Error: ' + (res.msg || 'save failed'), 'err');
                 planetSave.disabled = false;
             }
         })
@@ -973,19 +1016,13 @@
         if (!confirm('Reset to the default ZeroTier public planet?')) return;
         planetClear.disabled = true;
         setPlanetMsg('Resetting…');
-        fetch(PARAM_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=update&root.' + APP + '.PlanetFile='
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            if (/^OK/.test(txt.trim())) {
+        saveParam('PlanetFile', '')
+        .then(function(res) {
+            if (res.ok) {
                 setPlanetMsg('Reset to built-in planet — proxy restarting…', 'ok');
                 setPlanetStatus(false);
             } else {
-                setPlanetMsg('Error: ' + txt.trim(), 'err');
+                setPlanetMsg('Error: ' + (res.msg || 'save failed'), 'err');
             }
         })
         .catch(function(e) { setPlanetMsg('Request failed: ' + e, 'err'); })
@@ -1012,35 +1049,20 @@
         }
         btnEl.disabled = true;
         setPortMsg('Saving…');
-        fetch(PARAM_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=update&root.' + APP + '.' + paramName + '=' + encodeURIComponent(String(p))
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            if (/^OK/.test(txt.trim())) {
-                setPortMsg('Saved — proxy restarting…', 'ok');
-            } else {
-                setPortMsg('Error: ' + txt.trim(), 'err');
-            }
+        saveParam(paramName, String(p))
+        .then(function(res) {
+            if (res.ok) setPortMsg('Saved — proxy restarting…', 'ok');
+            else setPortMsg('Error: ' + (res.msg || 'save failed'), 'err');
         })
         .catch(function(e) { setPortMsg('Request failed: ' + e, 'err'); })
         .finally(function() { btnEl.disabled = false; });
     }
 
     // Load current port values
-    fetch(PARAM_URL + '?action=list&group=root.' + APP,
-          { cache: 'no-store', credentials: 'same-origin' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            var hm = txt.match(/HTTPProxyPort=([^\r\n]+)/);
-            if (hm) httpPortInput.value = hm[1].trim();
-            var sm = txt.match(/SOCKS5ProxyPort=([^\r\n]+)/);
-            if (sm) socks5PortInput.value = sm[1].trim();
-        })
-        .catch(function() {});
+    getParamsOnce().then(function(p) {
+        if (typeof p.HTTPProxyPort === 'string') httpPortInput.value = p.HTTPProxyPort;
+        if (typeof p.SOCKS5ProxyPort === 'string') socks5PortInput.value = p.SOCKS5ProxyPort;
+    });
 
     httpPortSave.addEventListener('click', function() {
         savePort('HTTPProxyPort', httpPortInput.value, httpPortSave);
@@ -1059,14 +1081,9 @@
         gwMsg.className = 'config-msg ' + (c || '');
     }
 
-    fetch(PARAM_URL + '?action=list&group=root.' + APP + '.ManagedGateway',
-          { cache: 'no-store', credentials: 'same-origin' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            var m = txt.match(/ManagedGateway=([^\r\n]*)/);
-            if (m) gwInput.value = m[1].trim();
-        })
-        .catch(function() {});
+    getParamsOnce().then(function(p) {
+        if (typeof p.ManagedGateway === 'string') gwInput.value = p.ManagedGateway;
+    });
 
     gwSave.addEventListener('click', function() {
         var val = gwInput.value.trim();
@@ -1076,19 +1093,10 @@
         }
         gwSave.disabled = true;
         setGwMsg('Saving…');
-        fetch(PARAM_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'action=update&root.' + APP + '.ManagedGateway=' + encodeURIComponent(val)
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) {
-            if (/^OK/.test(txt.trim())) {
-                setGwMsg('Saved — proxy restarting…', 'ok');
-            } else {
-                setGwMsg('Error: ' + txt.trim(), 'err');
-            }
+        saveParam('ManagedGateway', val)
+        .then(function(res) {
+            if (res.ok) setGwMsg('Saved — proxy restarting…', 'ok');
+            else setGwMsg('Error: ' + (res.msg || 'save failed'), 'err');
         })
         .catch(function(e) { setGwMsg('Request failed: ' + e, 'err'); })
         .finally(function() { gwSave.disabled = false; });
@@ -1103,7 +1111,7 @@
             .then(function(data) {
                 var tag = (data.tag_name || '').replace(/^v/, '');
                 if (!tag) return;
-                if (compareVersions(tag, '1.16.12') > 0) {
+                if (compareVersions(tag, '1.16.13') > 0) {
                     document.getElementById('update-version').textContent = 'v' + tag;
                     document.getElementById('update-banner').classList.add('visible');
                     if (btn) btn.textContent = 'Update Available';

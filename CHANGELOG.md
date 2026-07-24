@@ -5,6 +5,18 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.16.13] - 2026-07-24 - Save settings on recorder / access-control devices
+
+- Fix: settings can now be saved on Axis devices that do not expose
+  `/axis-cgi/param.cgi`, such as recorder/NVR products (e.g. S3008) and
+  access-control controllers (e.g. A1610, A1710, A1810). On these devices the
+  web UI previously appeared unable to persist configuration (issue #9).
+- The app now exposes a small settings endpoint at
+  `/local/ZeroTier_VPN/api/settings` through a manifest reverse-proxy. The web
+  UI uses `param.cgi` when available and transparently falls back to this
+  endpoint when it is not, so configuration is written directly through the
+  ACAP parameter store.
+
 ## [1.16.12-Signed] - 2026-07-21 - ZeroTier VPN 1.16.12 (Signed)
 
 - Packages are now signed with the Axis ACAP signing service and install
