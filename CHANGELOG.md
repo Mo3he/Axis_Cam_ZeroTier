@@ -5,6 +5,22 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.16.14] - 2026-08-19 - Configurable forwarded ports
+
+- Add configurable direct port forwarding, including optional SSH access on
+  port 22, while retaining ports 80, 443, and 554 by default.
+- Changing the forwarded ports or the proxy ports reloads the listeners in
+  place instead of rejoining ZeroTier. Changing the Network ID or Managed
+  Gateway rejoins without restarting the node, so peers keep their paths.
+  Only the Planet File restarts the node.
+- The node now keeps ZeroTier's standard UDP port 9993 across restarts instead
+  of picking a random one, so peers reuse their cached path and reconnect in
+  seconds rather than minutes.
+- Fix: reloading no longer hangs the proxy. Listening sockets were closed from
+  the main thread while accept loops were blocked on them, which deadlocks the
+  userspace stack. Each accept loop now polls and closes its own socket.
+- Fix: the app shuts down promptly instead of needing SIGKILL after 3 s.
+
 ## [1.16.13] - 2026-07-24 - Save settings on recorder / access-control devices
 
 - Fix: settings can now be saved on Axis devices that do not expose

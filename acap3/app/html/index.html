@@ -376,6 +376,17 @@
 <div class="card">
     <div class="card-title">Proxy Port Settings</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+        Directly forward these camera ports over ZeroTier. Use commas, for example
+        <span style="font-family:var(--mono);">80,443,554,22</span>. Every listed port
+        is reachable by authorized ZeroTier members.
+    </div>
+    <div class="config-row" style="margin-bottom:12px;">
+        <input class="config-input" id="forward-ports-input" type="text"
+               placeholder="80,443,554" autocomplete="off" spellcheck="false" />
+        <button class="config-btn" id="forward-ports-save">Save</button>
+    </div>
+    <div class="config-msg" id="forward-ports-msg"></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
         Set the loopback ports this app listens on. Change these if another app
         is already using the defaults (8080 / 1080). The proxy will restart when
         you save.
@@ -962,6 +973,9 @@
     var socks5PortInput = document.getElementById('socks5-port-input');
     var socks5PortSave  = document.getElementById('socks5-port-save');
     var portMsg        = document.getElementById('port-msg');
+    var forwardPortsInput = document.getElementById('forward-ports-input');
+    var forwardPortsSave = document.getElementById('forward-ports-save');
+    var forwardPortsMsg = document.getElementById('forward-ports-msg');
 
     function setPortMsg(txt, cls) {
         portMsg.textContent = txt;
@@ -1003,6 +1017,8 @@
             if (hm) httpPortInput.value = hm[1].trim();
             var sm = txt.match(/SOCKS5ProxyPort=([^\r\n]+)/);
             if (sm) socks5PortInput.value = sm[1].trim();
+            var fm = txt.match(/ForwardPorts=([^\r\n]+)/);
+            if (fm) forwardPortsInput.value = fm[1].trim();
         })
         .catch(function() {});
 
@@ -1011,6 +1027,44 @@
     });
     socks5PortSave.addEventListener('click', function() {
         savePort('SOCKS5ProxyPort', socks5PortInput.value, socks5PortSave);
+    });
+
+    function setForwardPortsMsg(txt, cls) {
+        forwardPortsMsg.textContent = txt;
+        forwardPortsMsg.className = 'config-msg ' + (cls || '');
+    }
+
+    function normalizeForwardPorts(value) {
+        var parts = value.split(',').map(function(part) { return part.trim(); });
+        if (!parts.length || parts.length > 16 || parts.some(function(part) {
+            return !/^\d+$/.test(part) || Number(part) < 1 || Number(part) > 65535;
+        })) return null;
+        var unique = parts.filter(function(part, index) { return parts.indexOf(part) === index; });
+        if (unique.length !== parts.length) return null;
+        return unique.join(',');
+    }
+
+    forwardPortsSave.addEventListener('click', function() {
+        var normalized = normalizeForwardPorts(forwardPortsInput.value.trim());
+        if (!normalized) {
+            setForwardPortsMsg('Use 1-16 unique ports between 1 and 65535, separated by commas.', 'err');
+            return;
+        }
+        forwardPortsSave.disabled = true;
+        setForwardPortsMsg('Saving...');
+        fetch(PARAM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'action=update&root.' + APP + '.ForwardPorts=' + encodeURIComponent(normalized)
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+            if (/^OK/.test(txt.trim())) setForwardPortsMsg('Saved - reloading ports...', 'ok');
+            else setForwardPortsMsg('Error: ' + txt.trim(), 'err');
+        })
+        .catch(function(e) { setForwardPortsMsg('Request failed: ' + e, 'err'); })
+        .finally(function() { forwardPortsSave.disabled = false; });
     });
 
     // Check for updates from GitHub

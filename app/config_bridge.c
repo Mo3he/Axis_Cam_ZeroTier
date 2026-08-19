@@ -41,8 +41,50 @@
 
 static pid_t zt_pid = -1;
 static guint reload_timer_id = 0;
-static gboolean pending_full_restart = FALSE;
 static AXParameter *g_ax_handle = NULL;
+
+typedef struct {
+    gchar *network_id;
+    gchar *planet_file;
+    gchar *http_port;
+    gchar *socks5_port;
+    gchar *forward_ports;
+    gchar *managed_gateway;
+} parameter_snapshot_t;
+
+static parameter_snapshot_t g_last_params;
+
+static gchar *read_parameter(AXParameter *handle, const char *name) {
+    GError *error = NULL;
+    gchar *value = NULL;
+    if (!ax_parameter_get(handle, name, &value, &error)) {
+        if (error) g_error_free(error);
+        return g_strdup("");
+    }
+    return value ? value : g_strdup("");
+}
+
+static void clear_parameter_snapshot(void) {
+    g_free(g_last_params.network_id);
+    g_free(g_last_params.planet_file);
+    g_free(g_last_params.http_port);
+    g_free(g_last_params.socks5_port);
+    g_free(g_last_params.forward_ports);
+    g_free(g_last_params.managed_gateway);
+    memset(&g_last_params, 0, sizeof(g_last_params));
+}
+
+static parameter_snapshot_t read_parameter_snapshot(AXParameter *handle) {
+    parameter_snapshot_t snapshot = {
+        .network_id = read_parameter(handle, "NetworkID"),
+        .planet_file = read_parameter(handle, "PlanetFile"),
+        .http_port = read_parameter(handle, "HTTPProxyPort"),
+        .socks5_port = read_parameter(handle, "SOCKS5ProxyPort"),
+        .forward_ports = read_parameter(handle, "ForwardPorts"),
+        .managed_gateway = read_parameter(handle, "ManagedGateway")
+    };
+    return snapshot;
+}
 
 /* ── base64 decoder ─────────────────────────────────────────────── */
 
@@ -137,16 +179,6 @@ static void start_proxy(void) {
     }
     zt_pid = pid;
     syslog(LOG_INFO, "zerotier-userspace started (pid %d)", zt_pid);
-}
-
-static void reload_proxy(void) {
-    if (zt_pid > 0 && kill(zt_pid, 0) == 0) {
-        /* process alive — ask it to reload */
-        kill(zt_pid, SIGUSR1);
-    } else {
-        /* not running (first start or crashed) */
-        start_proxy();
-    }
 }
 
 /* Watchdog: check the child every 60 s and restart if it has died. */
@@ -261,6 +293,7 @@ static void update_config_file(AXParameter *handle) {
     gchar *network_id = NULL;
     gchar *http_port = NULL;
     gchar *socks5_port = NULL;
+    gchar *forward_ports = NULL;
     gchar *managed_gateway = NULL;
 
     if (!ax_parameter_get(handle, "NetworkID", &network_id, &error)) {
@@ -274,6 +307,10 @@ static void update_config_file(AXParameter *handle) {
     if (!ax_parameter_get(handle, "SOCKS5ProxyPort", &socks5_port, &error)) {
         if (error) { g_error_free(error); error = NULL; }
         socks5_port = g_strdup("1080");
+    }
+    if (!ax_parameter_get(handle, "ForwardPorts", &forward_ports, &error)) {
+        if (error) { g_error_free(error); error = NULL; }
+        forward_ports = g_strdup("80,443,554");
     }
     if (!ax_parameter_get(handle, "ManagedGateway", &managed_gateway, &error)) {
         if (error) { g_error_free(error); error = NULL; }
@@ -292,6 +329,7 @@ static void update_config_file(AXParameter *handle) {
         fprintf(f, "network_id=%s\n", network_id   ? network_id   : "");
         fprintf(f, "http_proxy_port=%s\n", http_port   ? http_port   : "8080");
         fprintf(f, "socks5_proxy_port=%s\n", socks5_port ? socks5_port : "1080");
+        fprintf(f, "forward_ports=%s\n", forward_ports ? forward_ports : "80,443,554");
         fprintf(f, "managed_gateway=%s\n", managed_gateway ? managed_gateway : "");
         fclose(f);
         chmod(CONFIG_FILE, 0600);
@@ -305,26 +343,49 @@ static void update_config_file(AXParameter *handle) {
     g_free(network_id);
     g_free(http_port);
     g_free(socks5_port);
+    g_free(forward_ports);
     g_free(managed_gateway);
 }
 
 /* ── ACAP parameter callback ─────────────────────────────────────── */
 
 static gboolean debounced_restart(gpointer G_GNUC_UNUSED data) {
+    parameter_snapshot_t current;
+    gboolean node_restart;
+    gboolean rejoin;
+    gboolean listener_reload;
+
     reload_timer_id = 0;
+    current = read_parameter_snapshot(g_ax_handle);
+    /* The planet file is only read when the node initialises, so it is the one
+     * setting that needs the process back. Restarting the node costs minutes of
+     * connectivity because peers keep sending to its previous UDP endpoint. */
+    node_restart = strcmp(current.planet_file, g_last_params.planet_file) != 0;
+    rejoin = strcmp(current.network_id, g_last_params.network_id) != 0 ||
+             strcmp(current.managed_gateway, g_last_params.managed_gateway) != 0;
+    listener_reload = strcmp(current.forward_ports, g_last_params.forward_ports) != 0 ||
+                      strcmp(current.http_port, g_last_params.http_port) != 0 ||
+                      strcmp(current.socks5_port, g_last_params.socks5_port) != 0;
+    clear_parameter_snapshot();
+    g_last_params = current;
+
     /* Re-read all params from the store — by 300 ms the write is complete. */
     if (g_ax_handle) {
         update_planet_file(g_ax_handle);
         update_config_file(g_ax_handle);
     }
-    if (pending_full_restart) {
-        pending_full_restart = FALSE;
-        syslog(LOG_INFO, "restarting zerotier-userspace with new config");
+    if (node_restart) {
+        syslog(LOG_INFO, "restarting zerotier-userspace with new planet file");
         stop_proxy();
         start_proxy();
-    } else {
-        syslog(LOG_INFO, "reloading zerotier-userspace with new config");
-        reload_proxy();
+    } else if (zt_pid <= 0 || kill(zt_pid, 0) != 0) {
+        start_proxy();
+    } else if (rejoin) {
+        syslog(LOG_INFO, "rejoining network without restarting the node");
+        kill(zt_pid, SIGUSR1);
+    } else if (listener_reload) {
+        syslog(LOG_INFO, "reloading listeners without leaving ZeroTier");
+        kill(zt_pid, SIGUSR2);
     }
     return G_SOURCE_REMOVE;
 }
@@ -338,16 +399,6 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
 
     syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    /* These require a full restart of the proxy. NetworkID is included because
-     * switching networks via an in-place SIGUSR1 reload does not reliably tear
-     * down and rejoin — a clean restart guarantees the new network is joined. */
-    if (strcmp(short_name, "NetworkID")       == 0 ||
-        strcmp(short_name, "PlanetFile")      == 0 ||
-        strcmp(short_name, "HTTPProxyPort")   == 0 ||
-        strcmp(short_name, "SOCKS5ProxyPort") == 0 ||
-        strcmp(short_name, "ManagedGateway")  == 0) {
-        pending_full_restart = TRUE;
-    }
     /* Coalesce rapid multi-param saves into one restart 300 ms after the last
      * change — keeps the GLib main loop responsive and ensures all params are
      * committed to the store before the child is restarted. */
@@ -365,7 +416,7 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
  * writing the parameters directly. */
 
 static const char *http_param_names[] = {
-    "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ManagedGateway"
+    "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ForwardPorts", "ManagedGateway"
 };
 
 static int http_is_known_param(const char *name) {
@@ -554,8 +605,7 @@ static gboolean http_on_incoming(GSocketService    *service G_GNUC_UNUSED,
         if (body_len > content_length) body_len = content_length;
         int applied = http_apply_settings(handle, body, body_len);
         syslog(LOG_INFO, "settings http: applied %d parameter(s)", applied);
-        /* Re-read params and do a clean restart, coalescing rapid saves. */
-        pending_full_restart = TRUE;
+        /* Coalesce rapid saves; the reload type is derived from the values. */
         if (reload_timer_id) g_source_remove(reload_timer_id);
         reload_timer_id = g_timeout_add(300, debounced_restart, NULL);
         http_send(out, "200 OK", "text/plain", "OK");
@@ -615,13 +665,14 @@ int main(void) {
         return 1;
     }
     g_ax_handle = handle;
+    g_last_params = read_parameter_snapshot(handle);
 
     update_planet_file(handle);
     update_config_file(handle);
     start_proxy();
 
     /* Register callbacks for every parameter */
-    const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ManagedGateway" };
+    const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ForwardPorts", "ManagedGateway" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
                                             parameter_changed, handle, &error)) {

@@ -5,7 +5,7 @@
  * device, no CAP_NET_ADMIN, no root required.
  *
  * Network access model:
- *   - Transparent TCP port forwarding for common camera ports (80, 443, 554)
+ *   - Transparent TCP port forwarding for configured camera ports
  *     → VPN peers can browse/stream directly to the ZeroTier IP with no config
  *   - SOCKS5 proxy on port 1080 → full access to any camera port without
  *     needing per-port forwarders; configure your browser/client once
@@ -34,6 +34,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <poll.h>
 
 #define APP_NAME          "ZeroTier_VPN"
 #define DEFAULT_CONFIG    "/usr/local/packages/ZeroTier_VPN/config.txt"
@@ -43,42 +44,41 @@
 #define RELAY_BUF_SIZE    8192
 
 /* Transparent port-forwarding: ZeroTier-IP:port → 127.0.0.1:port */
-static const int FORWARD_PORTS[] = { 80, 443, 554 };
-#define N_FORWARD_PORTS   (sizeof(FORWARD_PORTS) / sizeof(FORWARD_PORTS[0]))
+#define MAX_FORWARD_PORTS 16
+static const int DEFAULT_FORWARD_PORTS[] = { 80, 443, 554 };
+#define DEFAULT_FORWARD_PORT_COUNT (sizeof(DEFAULT_FORWARD_PORTS) / sizeof(DEFAULT_FORWARD_PORTS[0]))
+static int g_forward_ports[MAX_FORWARD_PORTS];
+static size_t g_forward_port_count;
 
 /* SOCKS5 proxy port on the ZeroTier interface (bound to ZT IP, not loopback) */
 #define SOCKS5_PORT        1080
+
+/* ZeroTier's standard transport port, pinned so peers keep their cached path. */
+#define ZT_UDP_PORT        9993
 
 /* Default loopback proxy ports — overridden by config file values */
 #define DEFAULT_HTTP_PORT   8080
 #define DEFAULT_SOCKS5_PORT 1080
 
-/* Reload flag set by SIGUSR1 handler */
+/* Reload flags set by signal handlers */
 static volatile sig_atomic_t reload_requested = 0;
+static volatile sig_atomic_t forward_reload_requested = 0;
 static volatile sig_atomic_t shutdown_requested = 0;
 
-/* Server socket FDs — closed on reload to unblock accept loops */
-static atomic_int g_srv_fds[N_FORWARD_PORTS + 1]; /* +1 for SOCKS5 */
-#define SOCKS5_SRV_IDX N_FORWARD_PORTS
+/* Bumped to retire the current generation of accept loops. Each loop polls
+   this and closes its own listening socket; closing a listening socket from
+   another thread while libzt is blocked in accept() deadlocks its stack. */
+static atomic_int g_server_epoch = 0;
 
-/* POSIX loopback server sockets — closed on reload with regular close() */
-static atomic_int g_http_connect_srv = -1; /* 127.0.0.1:<chosen port> */
-static atomic_int g_local_socks5_srv = -1; /* 127.0.0.1:<chosen port> */
 /* Actual ports bound (0 = not yet bound / failed) */
 static atomic_int g_http_port_actual        = 0;
 static atomic_int g_local_socks5_port_actual = 0;
 
-static void close_server_sockets(void) {
-    for (size_t i = 0; i < N_FORWARD_PORTS + 1; i++) {
-        int fd = atomic_exchange(&g_srv_fds[i], -1);
-        if (fd >= 0)
-            zts_bsd_close(fd);
-    }
-    int cfd;
-    cfd = atomic_exchange(&g_http_connect_srv, -1);
-    if (cfd >= 0) close(cfd);
-    cfd = atomic_exchange(&g_local_socks5_srv, -1);
-    if (cfd >= 0) close(cfd);
+/* How long an idle accept loop sleeps before re-checking the epoch. */
+#define ACCEPT_POLL_MS 200
+
+static void retire_server_threads(void) {
+    atomic_fetch_add(&g_server_epoch, 1);
 }
 
 /* Current network ID (0 = not joined) */
@@ -199,9 +199,45 @@ typedef struct {
     char network_id[20];    /* 16-hex-char network ID */
     int  http_proxy_port;   /* loopback HTTP CONNECT proxy port */
     int  socks5_proxy_port; /* loopback outbound SOCKS5 port */
+    char forward_ports[256]; /* comma-separated direct forwarding ports */
     char managed_gateway[ZTS_IP_MAX_STR_LEN]; /* optional ZT gateway for routed
                                                  subnets; empty = auto-detect */
 } config_t;
+
+static void set_default_forward_ports(void) {
+    memcpy(g_forward_ports, DEFAULT_FORWARD_PORTS, sizeof(DEFAULT_FORWARD_PORTS));
+    g_forward_port_count = DEFAULT_FORWARD_PORT_COUNT;
+}
+
+static void parse_forward_ports(const char *value) {
+    char copy[256];
+    char *saveptr = NULL;
+    char *token;
+
+    g_forward_port_count = 0;
+    snprintf(copy, sizeof(copy), "%s", value ? value : "");
+    token = strtok_r(copy, ",", &saveptr);
+    while (token && g_forward_port_count < MAX_FORWARD_PORTS) {
+        char *start = token;
+        char *end;
+        long port;
+        while (*start == ' ' || *start == '\t') start++;
+        end = start + strlen(start);
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) end--;
+        *end = '\0';
+        port = strtol(start, &end, 10);
+        while (*end == ' ' || *end == '\t') end++;
+        if (start[0] != '\0' && *end == '\0' && port >= 1 && port <= 65535) {
+            bool duplicate = false;
+            for (size_t i = 0; i < g_forward_port_count; i++) {
+                if (g_forward_ports[i] == (int)port) duplicate = true;
+            }
+            if (!duplicate) g_forward_ports[g_forward_port_count++] = (int)port;
+        }
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+    if (g_forward_port_count == 0) set_default_forward_ports();
+}
 
 static bool load_config(const char *path, config_t *cfg) {
     FILE *f = fopen(path, "r");
@@ -211,6 +247,7 @@ static bool load_config(const char *path, config_t *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->http_proxy_port   = DEFAULT_HTTP_PORT;
     cfg->socks5_proxy_port = DEFAULT_SOCKS5_PORT;
+    snprintf(cfg->forward_ports, sizeof(cfg->forward_ports), "80,443,554");
     char line[256];
     while (fgets(line, sizeof(line), f)) {
         /* strip newline */
@@ -243,6 +280,8 @@ static bool load_config(const char *path, config_t *cfg) {
         } else if (strcmp(key, "socks5_proxy_port") == 0) {
             int p = atoi(val);
             if (p > 0 && p <= 65535) cfg->socks5_proxy_port = p;
+        } else if (strcmp(key, "forward_ports") == 0) {
+            snprintf(cfg->forward_ports, sizeof(cfg->forward_ports), "%s", val);
         } else if (strcmp(key, "managed_gateway") == 0) {
             snprintf(cfg->managed_gateway, sizeof(cfg->managed_gateway), "%s", val);
         }
@@ -352,12 +391,7 @@ static void *handle_forward(void *arg) {
 static void *port_forwarder(void *arg) {
     forwarder_ctx_t *fctx = arg;
     int port = fctx->port;
-
-    /* Determine slot index for this port */
-    int slot = -1;
-    for (size_t i = 0; i < N_FORWARD_PORTS; i++) {
-        if (FORWARD_PORTS[i] == port) { slot = (int)i; break; }
-    }
+    int my_epoch = atomic_load(&g_server_epoch);
 
     /* Create ZT listening socket */
     int srv = zts_bsd_socket(ZTS_AF_INET, ZTS_SOCK_STREAM, 0);
@@ -366,10 +400,6 @@ static void *port_forwarder(void *arg) {
         free(fctx);
         return NULL;
     }
-
-    /* Register so reload can close us */
-    if (slot >= 0)
-        atomic_store(&g_srv_fds[slot], srv);
 
     /* Allow rebind after reload without waiting for TIME_WAIT to expire */
     int reuse = 1;
@@ -408,16 +438,15 @@ static void *port_forwarder(void *arg) {
         free(fctx);
         return NULL;
     }
+    zts_set_blocking(srv, 0);
 
     syslog(LOG_INFO, "proxy: forwarding %s:%d → 127.0.0.1:%d",
            fctx->zt_addr, port, port);
 
-    while (!shutdown_requested) {
+    while (!shutdown_requested && atomic_load(&g_server_epoch) == my_epoch) {
         int client = zts_bsd_accept(srv, NULL, NULL);
         if (client < 0) {
-            if (shutdown_requested || atomic_load(&g_srv_fds[slot < 0 ? 0 : slot]) != srv) break;
-            syslog(LOG_WARNING, "proxy: accept on port %d: err %d", port, client);
-            zts_util_delay(1000);
+            zts_util_delay(ACCEPT_POLL_MS);
             continue;
         }
 
@@ -604,15 +633,13 @@ fail:
 /* SOCKS5 accept loop */
 static void *socks5_server(void *arg) {
     const char *zt_addr = arg;
+    int my_epoch = atomic_load(&g_server_epoch);
 
     int srv = zts_bsd_socket(ZTS_AF_INET, ZTS_SOCK_STREAM, 0);
     if (srv < 0) {
         syslog(LOG_ERR, "socks5: socket failed");
         return NULL;
     }
-
-    /* Register so reload can close us */
-    atomic_store(&g_srv_fds[SOCKS5_SRV_IDX], srv);
 
     /* Allow rebind after reload without waiting for TIME_WAIT to expire */
     int reuse = 1;
@@ -646,14 +673,14 @@ static void *socks5_server(void *arg) {
         zts_bsd_close(srv);
         return NULL;
     }
+    zts_set_blocking(srv, 0);
 
     syslog(LOG_INFO, "SOCKS5 proxy ready on %s:%d", zt_addr, SOCKS5_PORT);
 
-    while (!shutdown_requested) {
+    while (!shutdown_requested && atomic_load(&g_server_epoch) == my_epoch) {
         int client = zts_bsd_accept(srv, NULL, NULL);
         if (client < 0) {
-            if (shutdown_requested || atomic_load(&g_srv_fds[SOCKS5_SRV_IDX]) != srv) break;
-            zts_util_delay(1000);
+            zts_util_delay(ACCEPT_POLL_MS);
             continue;
         }
 
@@ -733,6 +760,15 @@ static int make_local_server(int port) {
     return srv;
 }
 
+/* accept() that gives up after ACCEPT_POLL_MS so the caller can re-check the
+   epoch instead of blocking forever on a socket it alone owns. */
+static int accept_with_timeout(int srv) {
+    struct pollfd pfd = { .fd = srv, .events = POLLIN, .revents = 0 };
+    if (poll(&pfd, 1, ACCEPT_POLL_MS) <= 0)
+        return -1;
+    return accept(srv, NULL, NULL);
+}
+
 /* Read HTTP request headers from a POSIX fd (one byte at a time) until the
    blank line terminator \r\n\r\n is found or the buffer is full.
    Returns byte count, or -1 on error. */
@@ -806,6 +842,7 @@ fail_local:
 /* HTTP CONNECT proxy accept loop — binds on 127.0.0.1 on the configured port. */
 static void *http_connect_server(void *arg) {
     int port = (int)(intptr_t)arg;
+    int my_epoch = atomic_load(&g_server_epoch);
 
     int srv = make_local_server(port);
     if (srv < 0) {
@@ -813,19 +850,13 @@ static void *http_connect_server(void *arg) {
                "port may be in use; change HTTPProxyPort in Settings", port);
         return NULL;
     }
-    atomic_store(&g_http_connect_srv, srv);
     atomic_store(&g_http_port_actual, port);
     syslog(LOG_INFO, "HTTP CONNECT proxy ready on 127.0.0.1:%d", port);
 
-    while (!shutdown_requested) {
-        int client = accept(srv, NULL, NULL);
-        if (client < 0) {
-            if (shutdown_requested ||
-                atomic_load(&g_http_connect_srv) != srv)
-                break;
-            zts_util_delay(500);
+    while (!shutdown_requested && atomic_load(&g_server_epoch) == my_epoch) {
+        int client = accept_with_timeout(srv);
+        if (client < 0)
             continue;
-        }
         pthread_t thr;
         pthread_attr_t attr;
         pthread_attr_init(&attr);
@@ -923,6 +954,7 @@ fail:
 /* Outbound SOCKS5 accept loop — binds on 127.0.0.1 on the configured port. */
 static void *local_socks5_server(void *arg) {
     int port = (int)(intptr_t)arg;
+    int my_epoch = atomic_load(&g_server_epoch);
 
     int srv = make_local_server(port);
     if (srv < 0) {
@@ -930,19 +962,13 @@ static void *local_socks5_server(void *arg) {
                "port may be in use; change SOCKS5ProxyPort in Settings", port);
         return NULL;
     }
-    atomic_store(&g_local_socks5_srv, srv);
     atomic_store(&g_local_socks5_port_actual, port);
     syslog(LOG_INFO, "Outbound SOCKS5 proxy ready on 127.0.0.1:%d", port);
 
-    while (!shutdown_requested) {
-        int client = accept(srv, NULL, NULL);
-        if (client < 0) {
-            if (shutdown_requested ||
-                atomic_load(&g_local_socks5_srv) != srv)
-                break;
-            zts_util_delay(500);
+    while (!shutdown_requested && atomic_load(&g_server_epoch) == my_epoch) {
+        int client = accept_with_timeout(srv);
+        if (client < 0)
             continue;
-        }
         pthread_t thr;
         pthread_attr_t attr;
         pthread_attr_init(&attr);
@@ -961,6 +987,8 @@ static void *local_socks5_server(void *arg) {
 static void sig_handler(int sig) {
     if (sig == SIGUSR1)
         reload_requested = 1;
+    else if (sig == SIGUSR2)
+        forward_reload_requested = 1;
     else
         shutdown_requested = 1;
 }
@@ -982,6 +1010,7 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
 
     /* Ensure state directories exist */
     mkdir(STATE_DIR, 0755);
@@ -1010,8 +1039,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Keep the same UDP port across restarts. With a random port, every peer
+       keeps sending to the previous one and needs minutes to re-path. */
+    zts_init_set_port(ZT_UDP_PORT);
+
     /* Start the ZeroTier node */
     rc = zts_node_start();
+    if (rc != ZTS_ERR_OK) {
+        syslog(LOG_WARNING, "zts_node_start on port %d failed: %d — "
+               "retrying with a random port", ZT_UDP_PORT, rc);
+        zts_init_set_port(0);
+        rc = zts_node_start();
+    }
     if (rc != ZTS_ERR_OK) {
         syslog(LOG_ERR, "zts_node_start failed: %d", rc);
         return 1;
@@ -1031,13 +1070,6 @@ int main(int argc, char *argv[]) {
         syslog(LOG_INFO, "Node online, ID: %s", node_hex);
         write_status("waiting_config", node_hex, NULL, NULL, 0, 0);
     }
-
-    /* Track config file mtime for auto-reload */
-    struct stat st;
-    time_t last_mtime = 0;
-    /* Initialise all server socket slots to -1 */
-    for (size_t i = 0; i < N_FORWARD_PORTS + 1; i++)
-        atomic_store(&g_srv_fds[i], -1);
 
     /* Main loop: load config, join network, run proxy */
     while (!shutdown_requested) {
@@ -1159,14 +1191,22 @@ int main(int argc, char *argv[]) {
                      want_gw[0] ? want_gw : "");
         }
 
+        /* Server threads are detached: a reload retires them and starts a new
+           generation, so nothing ever joins them. */
+        pthread_attr_t srv_attr;
+        pthread_attr_init(&srv_attr);
+        pthread_attr_setdetachstate(&srv_attr, PTHREAD_CREATE_DETACHED);
+
         /* Start port forwarders */
-        pthread_t fwd_threads[N_FORWARD_PORTS];
-        for (size_t i = 0; i < N_FORWARD_PORTS; i++) {
+        parse_forward_ports(cfg.forward_ports);
+        pthread_t fwd_thread;
+        for (size_t i = 0; i < g_forward_port_count; i++) {
             forwarder_ctx_t *fctx = malloc(sizeof(*fctx));
             if (!fctx) continue;
-            fctx->port = FORWARD_PORTS[i];
+            fctx->port = g_forward_ports[i];
             snprintf(fctx->zt_addr, sizeof(fctx->zt_addr), "%s", zt_addr_str);
-            pthread_create(&fwd_threads[i], NULL, port_forwarder, fctx);
+            if (pthread_create(&fwd_thread, &srv_attr, port_forwarder, fctx) != 0)
+                free(fctx);
         }
 
         /* Start SOCKS5 proxy */
@@ -1176,24 +1216,25 @@ int main(int argc, char *argv[]) {
         static char socks5_addr[ZTS_IP_MAX_STR_LEN];
         snprintf(socks5_addr, sizeof(socks5_addr), "%s", zt_addr_str);
         pthread_t socks5_thread;
-        pthread_create(&socks5_thread, NULL, socks5_server, socks5_addr);
+        pthread_create(&socks5_thread, &srv_attr, socks5_server, socks5_addr);
 
         /* Start outbound proxies on loopback (camera apps → ZeroTier) */
         atomic_store(&g_http_port_actual, 0);
         atomic_store(&g_local_socks5_port_actual, 0);
         pthread_t http_proxy_thread;
-        pthread_create(&http_proxy_thread, NULL, http_connect_server,
+        pthread_create(&http_proxy_thread, &srv_attr, http_connect_server,
                        (void *)(intptr_t)cfg.http_proxy_port);
         pthread_t local_socks5_thread;
-        pthread_create(&local_socks5_thread, NULL, local_socks5_server,
+        pthread_create(&local_socks5_thread, &srv_attr, local_socks5_server,
                        (void *)(intptr_t)cfg.socks5_proxy_port);
+        pthread_attr_destroy(&srv_attr);
 
         /* Give the loopback proxy threads a moment to bind, then report
            the actual ports they secured (may differ from 8080/1080 if those
            are taken by another VPN ACAP). */
         zts_util_delay(500);
-        syslog(LOG_INFO, "ZeroTier VPN is running — "
-               "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d | "
+         syslog(LOG_INFO, "ZeroTier VPN is running — "
+             "IP: %s | Forward ports configured | SOCKS5: %s:%d | "
                "HTTP proxy: 127.0.0.1:%d | Outbound SOCKS5: 127.0.0.1:%d",
                zt_addr_str, zt_addr_str, SOCKS5_PORT,
                atomic_load(&g_http_port_actual),
@@ -1202,20 +1243,9 @@ int main(int argc, char *argv[]) {
                      atomic_load(&g_http_port_actual),
                      atomic_load(&g_local_socks5_port_actual));
 
-        /* Snapshot current config mtime so the change-detection loop
-           doesn't immediately fire on the write that brought us here */
-        if (stat(config_path, &st) == 0)
-            last_mtime = st.st_mtime;
-
         /* Wait for reload or shutdown */
         int heartbeat_ticks = 0;
-        while (!shutdown_requested && !reload_requested) {
-            /* Check for config file changes */
-            if (stat(config_path, &st) == 0 && st.st_mtime > last_mtime) {
-                last_mtime = st.st_mtime;
-                syslog(LOG_INFO, "Config file changed — reloading");
-                break;
-            }
+        while (!shutdown_requested && !reload_requested && !forward_reload_requested) {
             /* Detect address loss — important for custom planet servers where
                root keepalives can drop and ZeroTier silently loses the network
                membership without killing the process.  Re-enter the join loop
@@ -1231,8 +1261,8 @@ int main(int argc, char *argv[]) {
                after syslog rotates the initial startup messages out. */
             if (++heartbeat_ticks >= 60) {
                 heartbeat_ticks = 0;
-                syslog(LOG_INFO, "ZeroTier VPN is running — "
-                       "IP: %s | Ports: 80,443,554 | SOCKS5: %s:%d | "
+                  syslog(LOG_INFO, "ZeroTier VPN is running — "
+                      "IP: %s | Forward ports configured | SOCKS5: %s:%d | "
                        "HTTP proxy: 127.0.0.1:%d | Outbound SOCKS5: 127.0.0.1:%d",
                        zt_addr_str, zt_addr_str, SOCKS5_PORT,
                        atomic_load(&g_http_port_actual),
@@ -1246,11 +1276,21 @@ int main(int argc, char *argv[]) {
             zts_util_delay(5000);
         }
 
+        bool full_reload = (reload_requested != 0);
+        bool preserve_network = (forward_reload_requested != 0);
         if (reload_requested)
             reload_requested = 0;
+        if (forward_reload_requested)
+            forward_reload_requested = 0;
 
-        /* Close server sockets so accept-loop threads unblock and exit */
-        close_server_sockets();
+        /* Retire the current accept loops; each closes its own socket. */
+        retire_server_threads();
+        zts_util_delay(ACCEPT_POLL_MS * 3);
+
+        if (preserve_network && !full_reload) {
+            syslog(LOG_INFO, "Reloading listeners without leaving network");
+            continue;
+        }
 
         /* The port forwarder and SOCKS5 threads will exit when
            shutdown_requested is set or when the ZT node stops.

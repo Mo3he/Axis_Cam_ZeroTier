@@ -51,6 +51,11 @@
                     "type": "string"
                 },
                 {
+                    "name": "ForwardPorts",
+                    "default": "80,443,554",
+                    "type": "string"
+                },
+                {
                     "name": "ManagedGateway",
                     "default": "",
                     "type": "string"

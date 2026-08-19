@@ -82,11 +82,14 @@ install via the camera's web interface under **Apps -> Add app**.
 2. Go to the app's settings page (dots menu -> Settings).
 3. Enter your **ZeroTier Network ID** (16-character hex string from
    [my.zerotier.com](https://my.zerotier.com)).
-4. *(Optional)* If using a **private ZeroTier planet** (self-hosted root server),
+4. *(Optional)* Set **Direct Forward Ports** to a comma-separated list such as
+  `80,443,554,22` to expose additional camera services directly on the
+  ZeroTier IP. The default is `80,443,554`.
+5. *(Optional)* If using a **private ZeroTier planet** (self-hosted root server),
    upload your planet file using the **Planet File** field. Leave it empty to use
    the default ZeroTier public infrastructure.
-5. Click **Open** to view the status page and logs.
-6. **Authorize the device:** go to [ZeroTier Central](https://my.zerotier.com)
+6. Click **Open** to view the status page and logs.
+7. **Authorize the device:** go to [ZeroTier Central](https://my.zerotier.com)
    (or your private controller), find the camera's Node ID in your network
    members, and check the "Auth" box.
 
@@ -161,7 +164,7 @@ Once connected, the camera is reachable from the ZeroTier network via:
 
 | Service | Address | Purpose |
 |---|---|---|
-| Direct port forwarding | `<zerotier-ip>:80 / 443 / 554` | Camera HTTP, HTTPS, and RTSP over ZeroTier |
+| Direct port forwarding | `<zerotier-ip>:configured ports` | Selected camera services over ZeroTier; defaults to HTTP, HTTPS, and RTSP (`80,443,554`) |
 | Inbound SOCKS5 | `<zerotier-ip>:1080` | Reach any camera port from the ZeroTier network |
 | Outbound HTTP CONNECT | `127.0.0.1:8080` * | Camera -> ZeroTier for HTTP/HTTPS |
 | Outbound SOCKS5 | `127.0.0.1:1080` * | Camera -> ZeroTier for SOCKS5-aware apps |
@@ -178,9 +181,11 @@ automatically falls back to the next available port (8181/8282/8383 for HTTP,
 
 ## How it works
 
-- **Direct port forwarding:** ports 80 (HTTP), 443 (HTTPS), and 554 (RTSP) on
-  the ZeroTier IP are transparently forwarded to the camera's local services.
-  Point your browser or RTSP client directly at the ZeroTier IP.
+- **Direct port forwarding:** the configured ports (by default 80 (HTTP), 443
+  (HTTPS), and 554 (RTSP)) on the ZeroTier IP are transparently forwarded to
+  the camera's local services. Point your browser or RTSP client directly at
+  the ZeroTier IP. Every configured port is reachable by authorized ZeroTier
+  members.
 - **Inbound SOCKS5 on `<zerotier-ip>:1080`:** configure any SOCKS5-aware client
   to use `<zerotier-ip>:1080` for access to any camera port from the ZeroTier
   network.
