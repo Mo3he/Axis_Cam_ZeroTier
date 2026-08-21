@@ -5,6 +5,10 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## 1.16.15 - 2026-08-21
+
+- Update to upstream 1.16.2.
+
 ## [1.16.14] - 2026-08-19 - Configurable forwarded ports
 
 - Add configurable direct port forwarding, including optional SSH access on
