@@ -8,7 +8,7 @@
       "vendorId": "70ee172dd9",
       "vendorUrl": "https://github.com/Mo3he/Axis_Cam_ZeroTier",
       "runMode": "respawn",
-      "version": "1.16.2",
+      "version": "1.16.14",
       "user": {
         "group": "sdk",
         "username": "sdk"
