@@ -1,0 +1,33 @@
+{
+  "app": "ZeroTier_VPN",
+  "friendlyName": "ZeroTier VPN",
+  "versionPolicy": "mirror",
+  "upstream": {
+    "type": "github-release",
+    "repo": "zerotier/ZeroTierOne",
+    "stripV": true,
+    "note": "App version aligns exactly to ZT core; 1.16.14 rebases down to 1.16.2 (downgrade accepted).",
+    "name": "ZeroTier One",
+    "changesUrl": "https://github.com/zerotier/ZeroTierOne/releases/tag/${UPSTREAM}"
+  },
+  "build": {
+    "command": "./build.sh && (cd acap3 && ./build.sh)",
+    "env": {}
+  },
+  "pins": [
+    {
+      "file": "Dockerfile.libzt",
+      "arg": "ZT_CORE_VERSION"
+    },
+    {
+      "file": "acap3/Dockerfile.libzt",
+      "arg": "ZT_CORE_VERSION"
+    }
+  ],
+  "signing": {
+    "skip": [
+      "*_acap3.eap",
+      "*_root.eap"
+    ]
+  }
+}

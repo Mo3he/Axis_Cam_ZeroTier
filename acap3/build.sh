@@ -48,7 +48,7 @@ echo '==> Cleaning old .eap files...'
 rm -f "$PARENT_ROOT"/*_acap3.eap
 
 echo '==> Building ACAP 3 armv7hf (for AXIS OS 9.x / 10.x cameras)...'
-${CTR} build ${BUILD_FLAGS} --build-arg ACAP_VERSION="${VERSION}" --tag 'zerotier-vpn-acap3-armv7hf' "$REPO_ROOT"
+${CTR} build ${BUILD_FLAGS} --tag 'zerotier-vpn-acap3-armv7hf' "$REPO_ROOT"
 
 echo '==> Extracting .eap package...'
 CID=$(${CTR} create 'zerotier-vpn-acap3-armv7hf')

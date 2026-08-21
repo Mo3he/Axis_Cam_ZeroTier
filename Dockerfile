@@ -9,10 +9,9 @@ ARG ARCH
 COPY ./app /opt/app/
 WORKDIR /opt/app
 
-# Patch the architecture and version placeholders in manifest.json
-ARG ACAP_VERSION=1.16.14
-RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json && \
-    sed -i "s/BUILDVER/${ACAP_VERSION}/" manifest.json
+# Patch the architecture placeholder in manifest.json.
+# The version is stored directly in manifest.json, not injected at build time.
+RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json
 
 # Cross-compile the proxy binary (linked against static libzt) and place in lib/.
 # libzt is C++ internally so we link with the C++ compiler.

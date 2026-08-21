@@ -11,9 +11,7 @@ WORKDIR /opt/app
 # ACAP 2.x firmware expects the settings page at the app root, not in html/
 RUN cp html/index.html index.html
 
-# Patch the version placeholder in package.conf (ACAP3 uses major.minor.patch)
-ARG ACAP_VERSION=1.16.14
-RUN sed -i "s/VERSION=BUILDVER/VERSION=${ACAP_VERSION}/" package.conf
+# The version is stored directly in package.conf, not injected at build time.
 
 # Build the main ACAP binary (config_bridge.c)
 RUN . /opt/axis/acapsdk/environment-setup* && make
@@ -39,9 +37,10 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
 # string. Repack the .eap with the corrected value after creation.
 RUN . /opt/axis/acapsdk/environment-setup* && create-package.sh && \
     EAP=$(ls *.eap) && \
-    MAJOR=$(echo ${ACAP_VERSION} | cut -d. -f1) && \
-    MINOR=$(echo ${ACAP_VERSION} | cut -d. -f2) && \
-    MICRO=$(echo ${ACAP_VERSION} | cut -d. -f3) && \
+    PKGVER=$(sed -n 's/^VERSION=//p' package.conf) && \
+    MAJOR=$(echo ${PKGVER} | cut -d. -f1) && \
+    MINOR=$(echo ${PKGVER} | cut -d. -f2) && \
+    MICRO=$(echo ${PKGVER} | cut -d. -f3) && \
     mkdir -p /tmp/eapfix && tar -xzf "$EAP" -C /tmp/eapfix && \
     sed -i \
         -e 's/APPTYPE="native"/APPTYPE="armv7hf"/' \

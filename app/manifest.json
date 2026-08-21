@@ -1,66 +1,66 @@
 {
-    "schemaVersion": "2.0.0",
-    "acapPackageConf": {
-        "setup": {
-            "friendlyName": "ZeroTier VPN",
-            "appName": "ZeroTier_VPN",
-            "vendor": "moshe@mohome.net",
-            "vendorId": "70ee172dd9",
-            "vendorUrl": "https://github.com/Mo3he/Axis_Cam_ZeroTier",
-            "runMode": "respawn",
-            "version": "BUILDVER",
-            "user": {
-                "group": "sdk",
-                "username": "sdk"
-            },
-            "architecture": "BUILDARCH",
-            "compatibleOsVersions": [
-                {
-                    "max": "13"
-                }
-            ]
-        },
-        "configuration": {
-            "settingPage": "index.html",
-            "reverseProxy": [
-                {
-                    "apiPath": "api",
-                    "target": "http://localhost:2202/",
-                    "access": "admin"
-                }
-            ],
-            "paramConfig": [
-                {
-                    "name": "NetworkID",
-                    "default": "",
-                    "type": "string"
-                },
-                {
-                    "name": "PlanetFile",
-                    "default": "",
-                    "type": "string"
-                },
-                {
-                    "name": "HTTPProxyPort",
-                    "default": "8080",
-                    "type": "string"
-                },
-                {
-                    "name": "SOCKS5ProxyPort",
-                    "default": "1080",
-                    "type": "string"
-                },
-                {
-                    "name": "ForwardPorts",
-                    "default": "80,443,554",
-                    "type": "string"
-                },
-                {
-                    "name": "ManagedGateway",
-                    "default": "",
-                    "type": "string"
-                }
-            ]
+  "schemaVersion": "2.0.0",
+  "acapPackageConf": {
+    "setup": {
+      "friendlyName": "ZeroTier VPN",
+      "appName": "ZeroTier_VPN",
+      "vendor": "moshe@mohome.net",
+      "vendorId": "70ee172dd9",
+      "vendorUrl": "https://github.com/Mo3he/Axis_Cam_ZeroTier",
+      "runMode": "respawn",
+      "version": "1.16.2",
+      "user": {
+        "group": "sdk",
+        "username": "sdk"
+      },
+      "architecture": "BUILDARCH",
+      "compatibleOsVersions": [
+        {
+          "max": "13"
         }
+      ]
+    },
+    "configuration": {
+      "settingPage": "index.html",
+      "reverseProxy": [
+        {
+          "apiPath": "api",
+          "target": "http://localhost:2202/",
+          "access": "admin"
+        }
+      ],
+      "paramConfig": [
+        {
+          "name": "NetworkID",
+          "default": "",
+          "type": "string"
+        },
+        {
+          "name": "PlanetFile",
+          "default": "",
+          "type": "string"
+        },
+        {
+          "name": "HTTPProxyPort",
+          "default": "8080",
+          "type": "string"
+        },
+        {
+          "name": "SOCKS5ProxyPort",
+          "default": "1080",
+          "type": "string"
+        },
+        {
+          "name": "ForwardPorts",
+          "default": "80,443,554",
+          "type": "string"
+        },
+        {
+          "name": "ManagedGateway",
+          "default": "",
+          "type": "string"
+        }
+      ]
     }
+  }
 }
