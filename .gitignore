@@ -1,3 +1,6 @@
 .DS_Store
 *.eap
 
+# Unstripped binaries kept for crash symbolisation, uploaded as a CI artifact
+debug/
+

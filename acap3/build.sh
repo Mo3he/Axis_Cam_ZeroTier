@@ -54,6 +54,10 @@ ${CTR} build ${BUILD_FLAGS} --tag 'zerotier-vpn-acap3-armv7hf' "$REPO_ROOT"
 echo '==> Extracting .eap package...'
 CID=$(${CTR} create 'zerotier-vpn-acap3-armv7hf')
 ${CTR} cp "${CID}":/opt/app/ "${TMPBASE}/acap3-out"
+# Unstripped binary for symbolising crash dumps; never shipped.
+mkdir -p "$PARENT_ROOT/debug"
+${CTR} cp "${CID}":/opt/debug/zerotier-userspace.unstripped \
+	"$PARENT_ROOT/debug/zerotier-userspace-acap3.unstripped"
 # Rename to consistent naming scheme regardless of what create-package.sh calls it
 find "${TMPBASE}/acap3-out" -name '*.eap' -exec cp {} \
 	"$PARENT_ROOT/ZeroTier_VPN_$(echo "${VERSION}" | tr '.' '_')_armv7hf_acap3.eap" \;

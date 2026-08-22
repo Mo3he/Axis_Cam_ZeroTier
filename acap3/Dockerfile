@@ -20,7 +20,7 @@ RUN . /opt/axis/acapsdk/environment-setup* && make
 RUN . /opt/axis/acapsdk/environment-setup* && \
     mkdir -p lib && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \
-    $CC_BIN --sysroot=${SDKTARGETSYSROOT} -O2 -Wall -std=gnu11 \
+    $CC_BIN --sysroot=${SDKTARGETSYSROOT} -O2 -g -Wall -std=gnu11 \
         -I/tmp/libzt/include \
         proxy/proxy.c \
         /tmp/libzt/build/lib/libzt.a \
@@ -28,8 +28,13 @@ RUN . /opt/axis/acapsdk/environment-setup* && \
         -static \
         -o lib/zerotier-userspace && \
     chmod 755 lib/zerotier-userspace
+# Must be the SDK's cross strip: the host `strip` cannot read ARM ELF and failed
+# silently here, leaving ~19 MB of symbols (90% of the binary) in the package.
+# The unstripped copy lives outside /opt/app so it stays out of the .eap.
+RUN mkdir -p /opt/debug && \
+    cp lib/zerotier-userspace /opt/debug/zerotier-userspace.unstripped
 RUN . /opt/axis/acapsdk/environment-setup* && \
-    strip lib/zerotier-userspace 2>/dev/null || true
+    "${STRIP:?SDK environment did not set STRIP}" lib/zerotier-userspace
 
 # Package the ACAP 3 .eap
 # Note: create-package.sh sets APPTYPE=native which ACAP 2.x firmware rejects.

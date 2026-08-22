@@ -57,6 +57,7 @@ done
 # Remove old .eap files so only the freshly built ones remain
 echo '==> Cleaning old .eap files...'
 rm -f "$REPO_ROOT"/*.eap
+rm -rf "$REPO_ROOT/debug"
 
 for ARCH in $ARCHS; do
 	echo "==> Building ${ARCH}..."
@@ -66,6 +67,10 @@ for ARCH in $ARCHS; do
 	CID=$(${CTR} create "zerotier-vpn-${ARCH}")
 	${CTR} cp "${CID}":/opt/app/ "${TMPBASE}/${ARCH}-out"
 	cp "${TMPBASE}/${ARCH}-out"/*.eap "$REPO_ROOT/"
+	# Unstripped binary for symbolising crash dumps; never shipped.
+	mkdir -p "$REPO_ROOT/debug"
+	${CTR} cp "${CID}":/opt/debug/zerotier-userspace.unstripped \
+		"$REPO_ROOT/debug/zerotier-userspace-${ARCH}.unstripped"
 	${CTR} rm "${CID}" >/dev/null
 	rm -rf "${TMPBASE}/${ARCH}-out"
 done
