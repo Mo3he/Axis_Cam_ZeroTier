@@ -24,6 +24,17 @@ repository root. To try a build, install the `.eap` on a camera under
 **Apps > Add app** in the device web interface, then check the app log under
 **Apps > (this app) > App log** to confirm it starts.
 
+### Debugging a crash
+
+The packaged binary is stripped, so a crash reports bare addresses. Each build
+also writes the unstripped binary to `debug/`, which CI keeps as the
+`debug-symbols` artifact. Stripping does not move code, so those addresses
+resolve against the unstripped copy:
+
+```sh
+aarch64-linux-gnu-addr2line -f -C -e debug/zerotier-userspace-aarch64.unstripped 0x400b90
+```
+
 ## Pull requests
 
 1. Fork the repository and branch from `main`.
