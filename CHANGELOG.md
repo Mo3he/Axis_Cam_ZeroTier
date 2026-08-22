@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## 1.16.15 - 2026-08-21
 
 - Update to upstream 1.16.2.
+- Strip the bundled `zerotier-userspace` binary. It was shipping with ~20 MB of
+  debug symbols because the strip step ran the build host's `strip`, which
+  cannot read ARM binaries and failed silently. The package is now 1.4 MB
+  instead of 9.1 MB.
 
 ## [1.16.14] - 2026-08-19 - Configurable forwarded ports
 
