@@ -1,6 +1,5 @@
-# App image — starts from the pre-built libzt base so the slow git clone and
-# cmake steps are skipped entirely on every code-only rebuild.
-# Build the base first with:  sh acap3/build.sh --build-base
+# Built on the pre-built libzt base so code-only rebuilds skip the slow clone and
+# cmake steps. Build the base first with:  sh acap3/build.sh --build-base
 FROM zerotier-libzt-base-acap3
 
 COPY ./app /opt/app/
@@ -16,7 +15,6 @@ RUN cp html/index.html index.html
 # Build the main ACAP binary (config_bridge.c)
 RUN . /opt/axis/acapsdk/environment-setup* && make
 
-# Cross-compile the proxy binary (statically linked against libzt)
 RUN . /opt/axis/acapsdk/environment-setup* && \
     mkdir -p lib && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \
@@ -36,10 +34,8 @@ RUN mkdir -p /opt/debug && \
 RUN . /opt/axis/acapsdk/environment-setup* && \
     "${STRIP:?SDK environment did not set STRIP}" lib/zerotier-userspace
 
-# Package the ACAP 3 .eap
-# Note: create-package.sh sets APPTYPE=native which ACAP 2.x firmware rejects.
-# Older cameras (EmbeddedDevelopment 2.x) expect APPTYPE to be the architecture
-# string. Repack the .eap with the corrected value after creation.
+# ACAP 2.x (EmbeddedDevelopment 2.x) firmware rejects some package.conf values
+# create-package.sh writes, e.g. APPTYPE="native" instead of the arch; repack.
 RUN . /opt/axis/acapsdk/environment-setup* && create-package.sh && \
     EAP=$(ls *.eap) && \
     PKGVER=$(sed -n 's/^VERSION=//p' package.conf) && \

@@ -1,15 +1,10 @@
 /**
- * ACAP parameter bridge for the ZeroTier userspace VPN.
+ * ACAP parameter bridge for the ZeroTier userspace VPN: mirrors axparameter into
+ * CONFIG_FILE, runs zerotier-userspace as a watchdogged child and, on changes,
+ * restarts it (PlanetFile), sends SIGUSR1 (rejoin) or SIGUSR2 (listeners only).
+ * Also serves a loopback settings API as a param.cgi fallback.
  *
- * Responsibilities:
- *  1. Read ZeroTier parameters from the ACAP parameter store (axparameter).
- *  2. Write them to CONFIG_FILE so the proxy binary can read them.
- *  3. Launch the proxy binary (zerotier-userspace) as a child process.
- *  4. On any parameter change: rewrite CONFIG_FILE and send SIGUSR1 to the
- *     child so it reloads without dropping the tunnel unnecessarily.
- *  5. Watchdog: if the child exits unexpectedly, restart it.
- *
- * Runs as the unprivileged 'sdk' ACAP user — no root or CAP_NET_ADMIN needed.
+ * Runs as the unprivileged 'sdk' ACAP user; no root or CAP_NET_ADMIN needed.
  */
 
 #include <axsdk/axparameter.h>
@@ -33,10 +28,8 @@
 #define CONFIG_FILE     "/usr/local/packages/ZeroTier_VPN/config.txt"
 #define ZT_BINARY       "/usr/local/packages/ZeroTier_VPN/lib/zerotier-userspace"
 #define PLANET_FILE     "/usr/local/packages/ZeroTier_VPN/localdata/roots"
-/* Localhost port for the settings fallback HTTP server. Must be unique per
- * ACAP: several of these VPN apps can run on the same device at once, and a
- * shared port would make one app's reverseProxy hit another app's server.
- * Tailscale uses 2201; ZeroTier uses 2202. */
+/* Loopback port for the settings fallback server. Must be unique per VPN ACAP,
+ * or one app's reverseProxy hits another's. Tailscale uses 2201. */
 #define HTTP_PORT       2202
 
 static pid_t zt_pid = -1;
@@ -107,14 +100,10 @@ static const signed char b64_table[256] = {
     -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 };
 
-/**
- * Decode base64 string into a freshly malloc'd buffer.
- * Returns the decoded byte count, or -1 on error.
- * Caller must free() the returned buffer.
- */
+/* Decode base64 into a malloc'd buffer the caller must free().
+   Returns the decoded byte count, or -1 on error. */
 static ssize_t base64_decode(const char *src, unsigned char **out) {
     size_t src_len = strlen(src);
-    /* max decoded size */
     size_t out_max = (src_len / 4) * 3 + 3;
     unsigned char *buf = malloc(out_max);
     if (!buf) return -1;
@@ -154,9 +143,8 @@ static void stop_proxy(void) {
             zt_pid = -1;
             return;
         }
-        usleep(100000); /* 100 ms */
+        usleep(100000);
     }
-    /* Still alive after 3 s — force-kill. */
     syslog(LOG_WARNING, "zerotier-userspace did not exit in 3 s, sending SIGKILL");
     kill(zt_pid, SIGKILL);
     waitpid(zt_pid, NULL, 0);
@@ -172,7 +160,6 @@ static void start_proxy(void) {
         return;
     }
     if (pid == 0) {
-        /* child */
         execl(ZT_BINARY, "zerotier-userspace", CONFIG_FILE, NULL);
         syslog(LOG_ERR, "execl %s failed: %s", ZT_BINARY, strerror(errno));
         _exit(1);
@@ -198,12 +185,8 @@ static gboolean watchdog_cb(gpointer G_GNUC_UNUSED data) {
 
 /* ── config file ─────────────────────────────────────────────────── */
 
-/**
- * Write the custom planet file to STATE_DIR/planet from the base64-encoded
- * PlanetFile parameter.  If the parameter is empty, remove any existing
- * custom planet file so ZeroTier falls back to its built-in defaults.
- * Returns true if the on-disk planet file was actually changed.
- */
+/* Write PLANET_FILE from the base64 PlanetFile parameter, or remove it when
+   empty so ZeroTier uses its built-in planet. Returns true if the file changed. */
 static bool update_planet_file(AXParameter *handle) {
     GError *error = NULL;
     gchar *b64 = NULL;
@@ -213,11 +196,9 @@ static bool update_planet_file(AXParameter *handle) {
         b64 = g_strdup("");
     }
 
-    /* Strip surrounding whitespace */
     gchar *trimmed = g_strstrip(b64);
 
     if (trimmed[0] == '\0') {
-        /* Empty parameter — remove custom planet so the default is used */
         bool changed = (access(PLANET_FILE, F_OK) == 0);
         if (changed) {
             if (remove(PLANET_FILE) != 0)
@@ -263,7 +244,6 @@ static bool update_planet_file(AXParameter *handle) {
     }
 
     if (changed) {
-        /* Ensure the localdata directory exists */
         char dir[256];
         snprintf(dir, sizeof(dir), "%s", PLANET_FILE);
         char *slash = strrchr(dir, '/');
@@ -318,7 +298,6 @@ static void update_config_file(AXParameter *handle) {
     }
     if (managed_gateway) g_strstrip(managed_gateway);
 
-    /* Basic validation — fall back to defaults if non-numeric */
     int hp = http_port  ? atoi(http_port)  : 0;
     int sp = socks5_port ? atoi(socks5_port) : 0;
     if (hp <= 0 || hp > 65535) { g_free(http_port);   http_port   = g_strdup("8080"); }
@@ -369,7 +348,7 @@ static gboolean debounced_restart(gpointer G_GNUC_UNUSED data) {
     clear_parameter_snapshot();
     g_last_params = current;
 
-    /* Re-read all params from the store — by 300 ms the write is complete. */
+    /* Re-read from the store; 300 ms after the last change the write is complete. */
     if (g_ax_handle) {
         update_planet_file(g_ax_handle);
         update_config_file(g_ax_handle);
@@ -399,21 +378,17 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
 
     syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    /* Coalesce rapid multi-param saves into one restart 300 ms after the last
-     * change — keeps the GLib main loop responsive and ensures all params are
-     * committed to the store before the child is restarted. */
+    /* Coalesce multi-param saves into one reload 300 ms after the last change,
+     * so every param is committed to the store before acting on it. */
     if (reload_timer_id)
         g_source_remove(reload_timer_id);
     reload_timer_id = g_timeout_add(300, debounced_restart, NULL);
 }
 
 /* ── embedded settings HTTP server (reverse-proxy fallback) ─────────
- * Some AXIS device classes (e.g. recorders/NVRs and access-control controllers
- * such as the A16xx/A17xx/A18xx) do not expose the legacy /axis-cgi/param.cgi
- * VAPIX endpoint, so the web UI cannot load or save settings through it. This
- * tiny HTTP server, reached through the manifest reverseProxy mapping at
- * /local/ZeroTier_VPN/api/settings, lets the web UI fall back to reading and
- * writing the parameters directly. */
+ * Some device classes (e.g. recorders, A16xx/A17xx/A18xx access controllers)
+ * lack /axis-cgi/param.cgi, so the UI reads and writes settings here instead,
+ * via the manifest reverseProxy at /local/ZeroTier_VPN/api/settings. */
 
 static const char *http_param_names[] = {
     "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ForwardPorts", "ManagedGateway"
@@ -671,7 +646,6 @@ int main(void) {
     update_config_file(handle);
     start_proxy();
 
-    /* Register callbacks for every parameter */
     const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ForwardPorts", "ManagedGateway" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
@@ -682,8 +656,6 @@ int main(void) {
         }
     }
 
-    /* Start the settings HTTP server used as a param.cgi fallback on device
-     * classes that do not expose /axis-cgi/param.cgi. */
     http_server_start(handle);
 
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
@@ -691,7 +663,6 @@ int main(void) {
     g_unix_signal_add(SIGTERM, signal_handler, loop);
     g_unix_signal_add(SIGINT,  signal_handler, loop);
 
-    /* watchdog every 60 s */
     g_timeout_add_seconds(60, watchdog_cb, NULL);
 
     syslog(LOG_INFO, "running — waiting for parameter changes");

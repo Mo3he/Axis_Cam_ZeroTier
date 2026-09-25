@@ -1,6 +1,5 @@
-# App image — starts from the pre-built libzt base so the slow git clone and
-# cmake steps are skipped entirely on every code-only rebuild.
-# Build the base first with:  sh build.sh --build-base
+# Built on the pre-built libzt base so code-only rebuilds skip the slow clone and
+# cmake steps. Build the base first with:  sh build.sh --build-base
 ARG ARCH=aarch64
 FROM zerotier-libzt-base-${ARCH}
 # Re-declare after FROM so it's available to RUN instructions
@@ -9,12 +8,10 @@ ARG ARCH
 COPY ./app /opt/app/
 WORKDIR /opt/app
 
-# Patch the architecture placeholder in manifest.json.
-# The version is stored directly in manifest.json, not injected at build time.
+# Only the arch is patched; the version lives directly in manifest.json.
 RUN sed -i "s/\"BUILDARCH\"/\"${ARCH}\"/" manifest.json
 
-# Cross-compile the proxy binary (linked against static libzt) and place in lib/.
-# libzt is C++ internally so we link with the C++ compiler.
+# libzt is C++ internally, hence -lstdc++.
 RUN . /opt/axis/acapsdk/environment-setup* && \
     mkdir -p lib && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \

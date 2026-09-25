@@ -1,17 +1,10 @@
 /**
- * ZeroTier userspace VPN proxy for Axis cameras (ACAP).
+ * ZeroTier userspace VPN proxy for Axis cameras, built on libzt (ZeroTier + lwIP):
+ * no kernel TUN device, CAP_NET_ADMIN or root needed.
  *
- * Runs entirely in userspace via libzt (ZeroTier SDK + lwIP) — no kernel TUN
- * device, no CAP_NET_ADMIN, no root required.
- *
- * Network access model:
- *   - Transparent TCP port forwarding for common camera ports (80, 443, 554)
- *     → VPN peers can browse/stream directly to the ZeroTier IP with no config
- *   - SOCKS5 proxy on port 1080 → full access to any camera port without
- *     needing per-port forwarders; configure your browser/client once
- *
- * Config is read from CONFIG_FILE (written by the C ACAP binary).
- * Reloads on SIGUSR1 or when the config file modification time changes.
+ * Inbound: TCP forwarders for the configured camera ports, plus SOCKS5 on
+ * ZT-IP:1080 for any other camera port. Outbound: loopback HTTP CONNECT/SOCKS5.
+ * Config is written by config_bridge; SIGUSR1 = full reload, SIGUSR2 = listeners only.
  */
 
 #include <ZeroTierSockets.h>
@@ -56,11 +49,10 @@ static size_t g_forward_port_count;
 /* ZeroTier's standard transport port, pinned so peers keep their cached path. */
 #define ZT_UDP_PORT        9993
 
-/* Default loopback proxy ports — overridden by config file values */
+/* Default loopback proxy ports; config file values override them */
 #define DEFAULT_HTTP_PORT   8080
 #define DEFAULT_SOCKS5_PORT 1080
 
-/* Reload flags set by signal handlers */
 static volatile sig_atomic_t reload_requested = 0;
 static volatile sig_atomic_t forward_reload_requested = 0;
 static volatile sig_atomic_t shutdown_requested = 0;
@@ -86,18 +78,8 @@ static uint64_t current_nwid = 0;
 
 /* ── status file ─────────────────────────────────────────────────── */
 
-/*
- * Write an atomic JSON status file served at /local/ZeroTier_VPN/status.json.
- * The UI reads this as its primary source of truth so it reflects the actual
- * tunnel state rather than relying solely on log parsing.
- *
- * state:      "starting" | "waiting_config" | "waiting_auth" | "connected" | "disconnected"
- * node_id:    hex node ID string, or NULL
- * zt_ip:      assigned ZeroTier IP, or NULL
- * network_id: 16-hex network ID, or NULL
- * http_port:  actual bound HTTP proxy port (0 = not bound)
- * socks5_port: actual bound outbound SOCKS5 port (0 = not bound)
- */
+/* Atomically write status.json, the UI's primary source of truth.
+   state: starting | waiting_config | waiting_auth | connected | disconnected */
 static void write_status(const char *state, const char *node_id,
                          const char *zt_ip, const char *network_id,
                          int http_port, int socks5_port)
@@ -180,13 +162,11 @@ static bool load_config(const char *path, config_t *cfg) {
     snprintf(cfg->forward_ports, sizeof(cfg->forward_ports), "80,443,554");
     char line[256];
     while (fgets(line, sizeof(line), f)) {
-        /* strip newline */
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
         nl = strchr(line, '\r');
         if (nl) *nl = '\0';
 
-        /* skip blanks and comments */
         if (line[0] == '\0' || line[0] == '#')
             continue;
 
@@ -198,7 +178,6 @@ static bool load_config(const char *path, config_t *cfg) {
         const char *key = line;
         const char *val = eq + 1;
 
-        /* trim leading spaces from key and val */
         while (*key == ' ') key++;
         while (*val == ' ') val++;
 
@@ -307,7 +286,6 @@ typedef struct {
     char zt_addr[ZTS_IP_MAX_STR_LEN];
 } forwarder_ctx_t;
 
-/* Handle a single forwarded connection */
 static void *handle_forward(void *arg) {
     relay_ctx_t *ctx = arg;
     relay(ctx->zt_fd, ctx->local_fd);
@@ -321,7 +299,6 @@ static void *port_forwarder(void *arg) {
     int port = fctx->port;
     int my_epoch = atomic_load(&g_server_epoch);
 
-    /* Create ZT listening socket */
     int srv = zts_bsd_socket(ZTS_AF_INET, ZTS_SOCK_STREAM, 0);
     if (srv < 0) {
         syslog(LOG_ERR, "proxy: socket for port %d failed", port);
@@ -339,8 +316,8 @@ static void *port_forwarder(void *arg) {
     zaddr.sin_port = htons((uint16_t)port);
     zts_inet_pton(ZTS_AF_INET, fctx->zt_addr, &zaddr.sin_addr);
 
-    /* Retry bind — lwIP may not have fully finished setting up the
-       interface by the time zts_addr_is_assigned() returns true */
+    /* Retry bind: lwIP may not have finished setting up the interface by the
+       time zts_addr_is_assigned() returns true */
     {
         int bind_ok = 0;
         for (int attempt = 0; attempt < 10; attempt++) {
@@ -378,7 +355,6 @@ static void *port_forwarder(void *arg) {
             continue;
         }
 
-        /* Connect to localhost */
         int local = socket(AF_INET, SOCK_STREAM, 0);
         if (local < 0) {
             zts_bsd_close(client);
@@ -401,9 +377,8 @@ static void *port_forwarder(void *arg) {
             continue;
         }
 
-        /* Clear the connect timeouts — they must not apply to the relay, or an
-           idle keep-alive connection would be torn down after 10 s of silence,
-           bouncing the web UI back to "System is getting ready". */
+        /* Clear the connect timeouts, or an idle keep-alive relay is torn down
+           after 10 s, bouncing the web UI back to "System is getting ready". */
         struct timeval no_tv = { .tv_sec = 0, .tv_usec = 0 };
         setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &no_tv, sizeof(no_tv));
         setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &no_tv, sizeof(no_tv));
@@ -415,7 +390,6 @@ static void *port_forwarder(void *arg) {
         zts_bsd_setsockopt(client, ZTS_SOL_SOCKET, ZTS_SO_KEEPALIVE,
                            &keepalive, sizeof(keepalive));
 
-        /* Spawn relay threads */
         relay_ctx_t *rctx = malloc(sizeof(*rctx));
         if (!rctx) {
             zts_bsd_close(client);
@@ -448,11 +422,8 @@ typedef struct {
     int zt_fd;
 } socks5_conn_t;
 
-/**
- * Handle a single SOCKS5 CONNECT request (RFC 1928).
- * The destination host is always replaced with 127.0.0.1 so the proxy
- * only reaches local camera services — it cannot be used as an open proxy.
- */
+/* Inbound SOCKS5 CONNECT (RFC 1928). The destination host is replaced with
+   127.0.0.1 so this only reaches camera services and is never an open proxy. */
 static void *handle_socks5(void *arg) {
     socks5_conn_t *sc = arg;
     int zt_fd = sc->zt_fd;
@@ -503,7 +474,6 @@ static void *handle_socks5(void *arg) {
     }
     }
 
-    /* Connect to localhost:port */
     int local = socket(AF_INET, SOCK_STREAM, 0);
     if (local < 0) {
         unsigned char err[] = { 0x05, 0x01, 0x00, 0x01, 0,0,0,0, 0,0 };
@@ -528,8 +498,7 @@ static void *handle_socks5(void *arg) {
         goto fail;
     }
 
-    /* Clear the connect timeouts — they must not apply to the relay, or an
-       idle keep-alive connection would be torn down after 10 s of silence. */
+    /* Clear the connect timeouts, or an idle keep-alive relay is torn down after 10 s. */
     struct timeval no_tv = { .tv_sec = 0, .tv_usec = 0 };
     setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &no_tv, sizeof(no_tv));
     setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &no_tv, sizeof(no_tv));
@@ -541,7 +510,6 @@ static void *handle_socks5(void *arg) {
     zts_bsd_setsockopt(zt_fd, ZTS_SOL_SOCKET, ZTS_SO_KEEPALIVE,
                        &keepalive, sizeof(keepalive));
 
-    /* Success reply */
     unsigned char ok[] = {
         0x05, 0x00, 0x00, 0x01,
         127, 0, 0, 1,
@@ -549,7 +517,6 @@ static void *handle_socks5(void *arg) {
     };
     zts_bsd_write(zt_fd, ok, sizeof(ok));
 
-    /* Relay */
     relay(zt_fd, local);
     return NULL;
 
@@ -579,7 +546,7 @@ static void *socks5_server(void *arg) {
     zaddr.sin_port = htons(SOCKS5_PORT);
     zts_inet_pton(ZTS_AF_INET, zt_addr, &zaddr.sin_addr);
 
-    /* Retry bind — same timing race as the port forwarders */
+    /* Retry bind: same timing race as the port forwarders */
     {
         int bind_ok = 0;
         for (int attempt = 0; attempt < 10; attempt++) {
@@ -650,7 +617,7 @@ static int zt_connect_to(const char *host, int port) {
     memset(&zaddr, 0, sizeof(zaddr));
     zaddr.sin_family = ZTS_AF_INET;
     zaddr.sin_port   = sa->sin_port;           /* already network byte order */
-    memcpy(&zaddr.sin_addr, &sa->sin_addr, 4); /* 4-byte IPv4 */
+    memcpy(&zaddr.sin_addr, &sa->sin_addr, 4);
     freeaddrinfo(res);
 
     int zt_fd = zts_bsd_socket(ZTS_AF_INET, ZTS_SOCK_STREAM, 0);
@@ -697,8 +664,7 @@ static int accept_with_timeout(int srv) {
     return accept(srv, NULL, NULL);
 }
 
-/* Read HTTP request headers from a POSIX fd (one byte at a time) until the
-   blank line terminator \r\n\r\n is found or the buffer is full.
+/* Read HTTP request headers one byte at a time up to \r\n\r\n or a full buffer.
    Returns byte count, or -1 on error. */
 static int read_http_headers(int fd, char *buf, int bufsize) {
     int total = 0;
@@ -724,7 +690,6 @@ static void *handle_http_connect(void *arg) {
     if (read_http_headers(local_fd, buf, (int)sizeof(buf)) < 0)
         goto fail_local;
 
-    /* First line: "CONNECT host:port HTTP/x.x" */
     char method[16], hostport[512];
     if (sscanf(buf, "%15s %511s", method, hostport) != 2 ||
         strcasecmp(method, "CONNECT") != 0) {
@@ -732,7 +697,6 @@ static void *handle_http_connect(void *arg) {
         goto fail_local;
     }
 
-    /* Split "host:port" on the last colon */
     char host[256] = {0};
     int  port = 443;
     char *colon = strrchr(hostport, ':');
@@ -767,7 +731,7 @@ fail_local:
     return NULL;
 }
 
-/* HTTP CONNECT proxy accept loop — binds on 127.0.0.1 on the configured port. */
+/* HTTP CONNECT proxy accept loop on 127.0.0.1:<configured port>. */
 static void *http_connect_server(void *arg) {
     int port = (int)(intptr_t)arg;
     int my_epoch = atomic_load(&g_server_epoch);
@@ -879,7 +843,7 @@ fail:
     return NULL;
 }
 
-/* Outbound SOCKS5 accept loop — binds on 127.0.0.1 on the configured port. */
+/* Outbound SOCKS5 accept loop on 127.0.0.1:<configured port>. */
 static void *local_socks5_server(void *arg) {
     int port = (int)(intptr_t)arg;
     int my_epoch = atomic_load(&g_server_epoch);
@@ -931,7 +895,6 @@ int main(int argc, char *argv[]) {
     openlog(APP_NAME, LOG_PID, LOG_USER);
     syslog(LOG_INFO, "zerotier-userspace starting (config: %s)", config_path);
 
-    /* Set up signal handlers */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = sig_handler;
@@ -940,7 +903,6 @@ int main(int argc, char *argv[]) {
     sigaction(SIGUSR1, &sa, NULL);
     sigaction(SIGUSR2, &sa, NULL);
 
-    /* Ensure state directories exist */
     mkdir(STATE_DIR, 0755);
     {
         char nets_dir[512];
@@ -948,7 +910,6 @@ int main(int argc, char *argv[]) {
         mkdir(nets_dir, 0755);
     }
 
-    /* Log whether a custom planet (roots) file is active */
     {
         char roots_path[512];
         struct stat rst;
@@ -960,7 +921,6 @@ int main(int argc, char *argv[]) {
             syslog(LOG_INFO, "No custom planet file — using built-in ZeroTier planet (zerotier.com)");
     }
 
-    /* Initialize ZeroTier from persistent state */
     int rc = zts_init_from_storage(STATE_DIR);
     if (rc != ZTS_ERR_OK) {
         syslog(LOG_ERR, "zts_init_from_storage failed: %d", rc);
@@ -971,7 +931,6 @@ int main(int argc, char *argv[]) {
        keeps sending to the previous one and needs minutes to re-path. */
     zts_init_set_port(ZT_UDP_PORT);
 
-    /* Start the ZeroTier node */
     rc = zts_node_start();
     if (rc != ZTS_ERR_OK) {
         syslog(LOG_WARNING, "zts_node_start on port %d failed: %d — "
@@ -1015,7 +974,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Parse network ID */
         uint64_t nwid = strtoull(cfg.network_id, NULL, 16);
         if (nwid == 0) {
             syslog(LOG_ERR, "Invalid network ID: %s", cfg.network_id);
@@ -1025,14 +983,12 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Leave old network if switching */
         if (current_nwid != 0 && current_nwid != nwid) {
             syslog(LOG_INFO, "Leaving network %llx", (unsigned long long)current_nwid);
             zts_net_leave(current_nwid);
             current_nwid = 0;
         }
 
-        /* Join network */
         if (current_nwid != nwid) {
             syslog(LOG_INFO, "Joining network %s", cfg.network_id);
             rc = zts_net_join(nwid);
@@ -1044,7 +1000,6 @@ int main(int argc, char *argv[]) {
             current_nwid = nwid;
         }
 
-        /* Wait for IP address assignment */
         {
             char roots_path[512];
             struct stat rst;
@@ -1077,7 +1032,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Get assigned address */
         char zt_addr_str[ZTS_IP_MAX_STR_LEN] = {0};
         zts_addr_get_str(nwid, ZTS_AF_INET, zt_addr_str, sizeof(zt_addr_str));
         syslog(LOG_INFO, "Address assigned: %s on network %s",
@@ -1089,7 +1043,6 @@ int main(int argc, char *argv[]) {
         pthread_attr_init(&srv_attr);
         pthread_attr_setdetachstate(&srv_attr, PTHREAD_CREATE_DETACHED);
 
-        /* Start port forwarders */
         parse_forward_ports(cfg.forward_ports);
         pthread_t fwd_thread;
         for (size_t i = 0; i < g_forward_port_count; i++) {
@@ -1101,10 +1054,7 @@ int main(int argc, char *argv[]) {
                 free(fctx);
         }
 
-        /* Start SOCKS5 proxy */
-        /* zt_addr_str is on the stack but the SOCKS5 server copies what it
-           needs before we could possibly overwrite it.  We use a static buffer
-           so the thread has a stable pointer. */
+        /* Static: socks5_server keeps using this pointer after the iteration ends. */
         static char socks5_addr[ZTS_IP_MAX_STR_LEN];
         snprintf(socks5_addr, sizeof(socks5_addr), "%s", zt_addr_str);
         pthread_t socks5_thread;
@@ -1121,9 +1071,8 @@ int main(int argc, char *argv[]) {
                        (void *)(intptr_t)cfg.socks5_proxy_port);
         pthread_attr_destroy(&srv_attr);
 
-        /* Give the loopback proxy threads a moment to bind, then report
-           the actual ports they secured (may differ from 8080/1080 if those
-           are taken by another VPN ACAP). */
+        /* Give the loopback proxies a moment to bind; a port reports 0 if its
+           bind failed (e.g. taken by another VPN ACAP). */
         zts_util_delay(500);
         syslog(LOG_INFO, "ZeroTier VPN is running — "
                "IP: %s | Forward ports configured | SOCKS5: %s:%d | "
@@ -1135,13 +1084,10 @@ int main(int argc, char *argv[]) {
                      atomic_load(&g_http_port_actual),
                      atomic_load(&g_local_socks5_port_actual));
 
-        /* Wait for reload or shutdown */
         int heartbeat_ticks = 0;
         while (!shutdown_requested && !reload_requested && !forward_reload_requested) {
-            /* Detect address loss — important for custom planet servers where
-               root keepalives can drop and ZeroTier silently loses the network
-               membership without killing the process.  Re-enter the join loop
-               so the proxy reconnects automatically. */
+            /* With custom planets, root keepalives can drop and ZeroTier silently
+               loses membership without exiting; rejoin so the proxy recovers. */
             if (!zts_addr_is_assigned(nwid, ZTS_AF_INET)) {
                 syslog(LOG_WARNING,
                        "ZeroTier address lost on network %s — rejoining",
@@ -1159,8 +1105,7 @@ int main(int argc, char *argv[]) {
                        zt_addr_str, zt_addr_str, SOCKS5_PORT,
                        atomic_load(&g_http_port_actual),
                        atomic_load(&g_local_socks5_port_actual));
-                /* Also refresh the status file timestamp so the UI can detect
-                   stale/dead status files (ts more than ~10 min old = suspect). */
+                /* Refresh ts too, so a stale status file (dead proxy) is detectable. */
                 write_status("connected", node_hex, zt_addr_str, cfg.network_id,
                              atomic_load(&g_http_port_actual),
                              atomic_load(&g_local_socks5_port_actual));
@@ -1184,10 +1129,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* The port forwarder and SOCKS5 threads will exit when
-           shutdown_requested is set or when the ZT node stops.
-           For a reload, we leave the network (which tears down
-           the ZT sockets) and re-enter the main loop. */
+        /* Full reload: leave the network (tearing down its ZT sockets) and rejoin. */
         if (!shutdown_requested && current_nwid != 0) {
             syslog(LOG_INFO, "Reloading — leaving network for rejoin");
             zts_net_leave(current_nwid);

@@ -1,18 +1,16 @@
-# Pre-built libzt base image for ACAP 3 (armv7hf, AXIS OS 9.x / 10.x).
-# Build once, reuse on every app rebuild. Only needs to be rebuilt when
-# LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version changes.
+# Pre-built libzt base image for ACAP 3 (armv7hf, AXIS OS 9.x / 10.x). Only needs
+# a rebuild when LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version changes.
 #
 #   podman build --layers -t zerotier-libzt-base-acap3 -f Dockerfile.libzt .
 
 ARG UBUNTU_VERSION=20.04
 FROM axisecp/acap-sdk:3.5-armv7hf-ubuntu${UBUNTU_VERSION}
 
-# Install build tools for libzt (cmake, git)
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     cmake git ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Clone libzt (ZeroTier Sockets SDK — userspace networking, no TUN needed)
+# libzt: ZeroTier Sockets SDK (userspace networking, no TUN needed)
 ARG LIBZT_VERSION=1.8.10
 ARG ZT_CORE_VERSION=1.16.2
 RUN git clone --branch ${LIBZT_VERSION} \
@@ -26,7 +24,6 @@ RUN git clone --branch ${LIBZT_VERSION} \
 
 # MAKE_JOBS: cap parallel C++ jobs to avoid OOM in memory-constrained envs.
 ARG MAKE_JOBS=2
-# Write cmake toolchain file for armv7hf cross-compilation, then build libzt
 RUN . /opt/axis/acapsdk/environment-setup* && \
     CC_BIN=$(echo $CC | awk '{print $1}') && \
     CXX_BIN=$(echo $CXX | awk '{print $1}') && \

@@ -360,7 +360,6 @@
     </button>
 </div>
 
-<!-- Network Configuration -->
 <div class="card">
     <div class="card-title">Network Configuration</div>
     <div class="config-row">
@@ -372,7 +371,6 @@
     <div class="config-msg" id="nwid-msg"></div>
 </div>
 
-<!-- Proxy Port Settings -->
 <div class="card">
     <div class="card-title">Proxy Port Settings</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
@@ -412,7 +410,6 @@
     <div class="config-msg" id="port-msg"></div>
 </div>
 
-<!-- Managed Routes (Advanced) -->
 <div class="card">
     <div class="card-title">Managed Routes (Advanced)</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
@@ -431,7 +428,6 @@
     <div id="routes-box" style="margin-top:10px;font-family:var(--mono);font-size:12px;color:var(--muted);"></div>
 </div>
 
-<!-- Planet File -->
 <div class="card">
     <div class="card-title">Custom Planet (Self-Hosted Controller)</div>
     <div class="config-row">
@@ -446,14 +442,12 @@
     <div class="config-msg" id="planet-msg"></div>
 </div>
 
-<!-- Status -->
 <div id="status-banner" class="status-banner connecting">
     <span class="dot"></span>
     <span id="status-text" class="status-text">Checking...</span>
     <span id="status-time" class="status-time"></span>
 </div>
 
-<!-- Update available -->
 <div id="update-banner" class="update-banner">
     <div class="update-text">Update available: <strong id="update-version"></strong></div>
     <a id="update-link" class="update-btn" href="https://github.com/Mo3he/Axis_Cam_ZeroTier/releases/latest" target="_blank" rel="noopener">
@@ -462,14 +456,12 @@
     </a>
 </div>
 
-<!-- Auth prompt (shown when node needs authorization) -->
 <div id="auth-block" class="auth-block" style="display:none;">
     <p>Authorize this device in <a href="https://my.zerotier.com" target="_blank"
        style="color:var(--accent);">ZeroTier Central</a>:</p>
     <p>Node ID: <code id="auth-node-id"></code></p>
 </div>
 
-<!-- Connection Info -->
 <div class="card" id="info-card" style="display:none;">
     <div class="card-title">Connection Details</div>
     <div class="info-grid">
@@ -492,7 +484,6 @@
     </div>
 </div>
 
-<!-- Proxy Addresses -->
 <div class="card" id="proxy-card" style="display:none;">
     <div class="card-title">Proxy Addresses</div>
     <div class="info-grid">
@@ -515,7 +506,6 @@
     </div>
 </div>
 
-<!-- Logs -->
 <div class="card">
     <div class="log-controls">
         <div class="card-title" style="margin-bottom:0;">Service Log</div>
@@ -586,7 +576,7 @@
     function cacheSet(k, v) { if (v) try { localStorage.setItem('zt-' + k, v); } catch(e){} }
     function cacheGet(k) { try { return localStorage.getItem('zt-' + k); } catch(e){ return null; } }
 
-    // Fetch the status.json written by proxy.c — primary source of truth
+    // status.json written by proxy.c is the primary source of truth
     function fetchStatus() {
         return fetch(STATUS_URL, { cache: 'no-store', credentials: 'same-origin' })
             .then(function(r) {
@@ -626,7 +616,6 @@
     }
 
     function parse(txt) {
-        // Extract Node ID: "Node online, ID: XXXXXXXXXX"
         var nodeMatches = txt.match(/Node online, ID:\s*([0-9a-fA-F]+)/g);
         var nodeId = null;
         if (nodeMatches) {
@@ -634,7 +623,6 @@
             if (nm) nodeId = nm[1];
         }
 
-        // Extract ZT IP: "Address assigned: X.X.X.X"
         var ipMatches = txt.match(/Address assigned:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/g);
         var ztIP = null;
         if (ipMatches) {
@@ -642,7 +630,6 @@
             if (im) ztIP = im[1];
         }
 
-        // Extract Network ID: "Joining network XXXXXXXXXXXXXXXX"
         var netMatches = txt.match(/Joining network\s+([0-9a-fA-F]+)/g);
         var networkId = null;
         if (netMatches) {
@@ -650,15 +637,12 @@
             if (nwm) networkId = nwm[1];
         }
 
-        // Extract actual loopback proxy ports from log
-        // "HTTP CONNECT proxy ready on 127.0.0.1:<port>"
         var httpPortMatch = txt.match(/HTTP CONNECT proxy ready on 127\.0\.0\.1:([0-9]+)/g);
         var httpPort = null;
         if (httpPortMatch) {
             var hpm = httpPortMatch[httpPortMatch.length - 1].match(/:([0-9]+)$/);
             if (hpm) httpPort = hpm[1];
         }
-        // "Outbound SOCKS5 proxy ready on 127.0.0.1:<port>"
         var socks5OutMatch = txt.match(/Outbound SOCKS5 proxy ready on 127\.0\.0\.1:([0-9]+)/g);
         var socks5OutPort = null;
         if (socks5OutMatch) {
@@ -666,12 +650,10 @@
             if (som) socks5OutPort = som[1];
         }
 
-        // Detect running state
         var isRunning = /ZeroTier VPN is running/.test(txt);
         var isWaitingAuth = /authorize this node/.test(txt) && !isRunning;
         var isStarting = /zerotier-userspace start/i.test(txt) || /Waiting for ZeroTier/.test(txt);
 
-        // Cache found values
         cacheSet('ip', ztIP); cacheSet('node', nodeId); cacheSet('network', networkId);
         cacheSet('httpPort', httpPort); cacheSet('socks5OutPort', socks5OutPort);
         ztIP = ztIP || cacheGet('ip');
@@ -822,11 +804,9 @@
             }
 
             if (status) {
-                /* status.json is the authoritative source */
                 render(parseStatus(status));
             } else {
-                /* status.json not yet written (first boot / old firmware).
-                   Fall back to log parsing with localStorage cache. */
+                /* No status.json yet (first boot): fall back to log parsing + cached state. */
                 var result = parse(txt);
                 if (result.state === 'disconnected') {
                     var cachedState = cacheGet('state');
@@ -843,9 +823,8 @@
     // Network ID config
     var PARAM_URL = '/axis-cgi/param.cgi';
 
-    // param.cgi is used when available; on devices that lack it (e.g. some
-    // recorder/NVR- and access-control-class devices) we fall back to the app's
-    // own endpoint, exposed through the manifest reverseProxy mapping at API_URL.
+    // Some recorder and access-control devices lack param.cgi; fall back to the
+    // app's own endpoint, exposed through the manifest reverseProxy at API_URL.
     var API_URL = '/local/' + APP + '/api/settings';
 
     // Parse param.cgi "action=list" output into a normalized object. The _any
@@ -860,8 +839,7 @@
         return out;
     }
 
-    // Load all params once (memoized). Tries param.cgi, then falls back to the
-    // app endpoint. Resolves to an object keyed by parameter name.
+    // Memoized: param.cgi first, then the app endpoint. Resolves to { name: value }.
     var _paramsPromise = null;
     function getParamsOnce() {
         if (_paramsPromise) return _paramsPromise;
@@ -883,9 +861,8 @@
         return _paramsPromise;
     }
 
-    // Save a single parameter. Tries param.cgi, and on transport failure (the
-    // endpoint is absent on recorder/access-control devices) falls back to the
-    // app endpoint. Resolves to { ok: bool, msg?: string }.
+    // param.cgi first, falling back to the app endpoint if it fails.
+    // Resolves to { ok: bool, msg?: string }.
     function saveParam(name, value) {
         return fetch(PARAM_URL, {
             method: 'POST',
@@ -920,7 +897,6 @@
         nwidMsg.className = 'config-msg ' + (cls || '');
     }
 
-    // Load current value
     getParamsOnce().then(function(p) {
         if (typeof p.NetworkID === 'string') nwidInput.value = p.NetworkID;
     });
@@ -966,7 +942,6 @@
         }
     }
 
-    // Load current planet state
     getParamsOnce().then(function(p) {
         setPlanetStatus(typeof p.PlanetFile === 'string' && p.PlanetFile.length > 0);
     });
@@ -1069,7 +1044,6 @@
         .finally(function() { btnEl.disabled = false; });
     }
 
-    // Load current port values
     getParamsOnce().then(function(p) {
         if (typeof p.HTTPProxyPort === 'string') httpPortInput.value = p.HTTPProxyPort;
         if (typeof p.SOCKS5ProxyPort === 'string') socks5PortInput.value = p.SOCKS5ProxyPort;

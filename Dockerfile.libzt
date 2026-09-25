@@ -1,6 +1,5 @@
-# Pre-built libzt base image for Axis ACAP 11+ (aarch64 / armv7hf).
-# Build once, reuse on every app rebuild. Only needs to be rebuilt when
-# LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version changes.
+# Pre-built libzt base image for Axis ACAP 11+ (aarch64 / armv7hf). Only needs a
+# rebuild when LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version changes.
 #
 #   podman build --layers --build-arg ARCH=aarch64 \
 #       -t zerotier-libzt-base-aarch64 -f Dockerfile.libzt .
@@ -13,12 +12,11 @@ ARG SDK=acap-native-sdk
 
 FROM ${REPO}/${SDK}:${VERSION}-${ARCH}-ubuntu${UBUNTU_VERSION}
 
-# Install build tools for libzt (cmake, git)
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     cmake git ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Clone libzt (ZeroTier Sockets SDK — userspace networking, no TUN needed)
+# libzt: ZeroTier Sockets SDK (userspace networking, no TUN needed)
 ARG LIBZT_VERSION=1.8.10
 ARG ZT_CORE_VERSION=1.16.2
 RUN git clone --branch ${LIBZT_VERSION} \
@@ -33,7 +31,6 @@ RUN git clone --branch ${LIBZT_VERSION} \
     sed -i 's|IP4_ADDR(&gw, 127, 0, 0, 1);|IP4_ADDR(\&gw, 127, 0, 0, 1); { const char* __ztsgw = ::getenv("ZTS_LWIP_DEFAULT_GW4"); ip4_addr_t __ztg; if (__ztsgw \&\& __ztsgw[0] \&\& ip4addr_aton(__ztsgw, \&__ztg)) { gw = __ztg; } }|' src/VirtualTap.cpp && \
     sed -i 's|vtap->netif4 = (void\*)n;|vtap->netif4 = (void*)n; { const char* __ztsgw2 = ::getenv("ZTS_LWIP_DEFAULT_GW4"); if (__ztsgw2 \&\& __ztsgw2[0]) { netif_set_up(n); netif_set_link_up(n); netif_set_default(n); } }|' src/VirtualTap.cpp
 
-# Write a cmake toolchain file for cross-compilation, then build libzt.
 # MAKE_JOBS: cap parallel C++ jobs to avoid OOM in memory-constrained envs.
 ARG MAKE_JOBS=2
 ARG ARCH

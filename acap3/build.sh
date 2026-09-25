@@ -7,7 +7,6 @@ PARENT_ROOT=$(cd -P "$(dirname "$0")/.." && pwd)
 # Read from package.conf so the filename cannot drift from the packaged version.
 VERSION=$(sed -n 's/^VERSION=//p' "${REPO_ROOT}/app/package.conf")
 
-# Auto-detect container runtime (prefer docker if daemon is running, fall back to podman)
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 	CTR=docker
 elif command -v podman >/dev/null 2>&1; then
@@ -26,9 +25,8 @@ TMPBASE=$(cd -P "${TMPDIR:-/tmp}" && pwd)
 BUILD_FLAGS=''
 if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
 
-# Build the slow libzt base image if it is missing.
-# Pass --build-base to force a rebuild (needed when upgrading LIBZT_VERSION,
-# ZT_CORE_VERSION, or the SDK image version).
+# The base image is built when missing; --build-base forces a rebuild (needed
+# after bumping LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version).
 FORCE_BASE=0
 for arg in "$@"; do
 	[ "$arg" = '--build-base' ] && FORCE_BASE=1
@@ -44,7 +42,6 @@ else
 	echo '==> libzt base for ACAP 3 already built — skipping'
 fi
 
-# Remove old acap3 .eap files from the parent repo root so only fresh ones remain
 echo '==> Cleaning old .eap files...'
 rm -f "$PARENT_ROOT"/*_acap3.eap
 

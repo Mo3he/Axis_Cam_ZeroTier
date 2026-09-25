@@ -1,13 +1,7 @@
 /**
- * ACAP 3 parameter bridge for the ZeroTier userspace VPN.
- *
- * Responsibilities:
- *  1. Read ZeroTier parameters from the ACAP parameter store (axparameter).
- *  2. Write them to CONFIG_FILE so the proxy binary can read them.
- *  3. Launch the proxy binary (zerotier-userspace) as a child process.
- *  4. On any parameter change: rewrite CONFIG_FILE and send SIGUSR1 to the
- *     child so it reloads without dropping the tunnel unnecessarily.
- *  5. Watchdog: if the child exits unexpectedly, restart it.
+ * ACAP 3 parameter bridge for the ZeroTier userspace VPN: mirrors axparameter
+ * into CONFIG_FILE, runs zerotier-userspace as a watchdogged child and, on changes,
+ * restarts it (PlanetFile), sends SIGUSR1 (rejoin) or SIGUSR2 (listeners only).
  *
  * Runs as root on ACAP 3 cameras (AXIS OS 9.x / 10.x).
  */
@@ -139,9 +133,8 @@ static void stop_proxy(void) {
             zt_pid = -1;
             return;
         }
-        usleep(100000); /* 100 ms */
+        usleep(100000);
     }
-    /* Still alive after 3 s — force-kill. */
     syslog(LOG_WARNING, "zerotier-userspace did not exit in 3 s, sending SIGKILL");
     kill(zt_pid, SIGKILL);
     waitpid(zt_pid, NULL, 0);
@@ -157,7 +150,6 @@ static void start_proxy(void) {
         return;
     }
     if (pid == 0) {
-        /* child */
         execl(ZT_BINARY, "zerotier-userspace", CONFIG_FILE, NULL);
         syslog(LOG_ERR, "execl %s failed: %s", ZT_BINARY, strerror(errno));
         _exit(1);
@@ -335,7 +327,7 @@ static gboolean debounced_restart(gpointer G_GNUC_UNUSED data) {
     clear_parameter_snapshot();
     g_last_params = current;
 
-    /* Re-read all params from the store — by 300 ms the write is complete. */
+    /* Re-read from the store; 300 ms after the last change the write is complete. */
     if (g_ax_handle) {
         update_planet_file(g_ax_handle);
         update_config_file(g_ax_handle);
@@ -365,9 +357,8 @@ static void parameter_changed(const gchar *name, const gchar G_GNUC_UNUSED *valu
 
     syslog(LOG_INFO, "parameter changed: %s", short_name);
 
-    /* Coalesce rapid multi-param saves into one restart 300 ms after the last
-     * change — keeps the GLib main loop responsive and ensures all params are
-     * committed to the store before the child is restarted. */
+    /* Coalesce multi-param saves into one reload 300 ms after the last change,
+     * so every param is committed to the store before acting on it. */
     if (reload_timer_id)
         g_source_remove(reload_timer_id);
     reload_timer_id = g_timeout_add(300, debounced_restart, NULL);
@@ -404,7 +395,6 @@ int main(void) {
     update_config_file(handle);
     start_proxy();
 
-    /* Register callbacks for every parameter */
     const char *params[] = { "NetworkID", "PlanetFile", "HTTPProxyPort", "SOCKS5ProxyPort", "ForwardPorts" };
     for (size_t i = 0; i < sizeof(params) / sizeof(params[0]); i++) {
         if (!ax_parameter_register_callback(handle, params[i],
@@ -420,7 +410,6 @@ int main(void) {
     g_unix_signal_add(SIGTERM, signal_handler, loop);
     g_unix_signal_add(SIGINT,  signal_handler, loop);
 
-    /* watchdog every 60 s */
     g_timeout_add_seconds(60, watchdog_cb, NULL);
 
     syslog(LOG_INFO, "running — waiting for parameter changes");

@@ -3,10 +3,8 @@ set -eu
 
 REPO_ROOT=$(cd -P "$(dirname "$0")" && pwd)
 
-# Auto-detect container runtime. Honor an explicit RUNTIME override
-# (RUNTIME=docker|podman); otherwise prefer docker if its daemon is running and
-# fall back to podman.
 # Usage: ./build.sh [aarch64|armv7hf ...] [--build-base]   (default: both)
+# RUNTIME=docker|podman overrides auto-detection (docker if its daemon runs, else podman).
 if [ -n "${RUNTIME:-}" ]; then
 	CTR="$RUNTIME"
 elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -27,9 +25,8 @@ TMPBASE=$(cd -P "${TMPDIR:-/tmp}" && pwd)
 BUILD_FLAGS=''
 if [ "${CTR}" = 'podman' ]; then BUILD_FLAGS='--layers'; fi
 
-# Build the slow libzt base images if they are missing.
-# Pass --build-base to force a rebuild of the base (needed when upgrading
-# LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version).
+# Base images are built when missing; --build-base forces a rebuild (needed after
+# bumping LIBZT_VERSION, ZT_CORE_VERSION, or the SDK image version).
 FORCE_BASE=0
 ARCHS=''
 for arg in "$@"; do
@@ -54,7 +51,6 @@ for ARCH in $ARCHS; do
 	fi
 done
 
-# Remove old .eap files so only the freshly built ones remain
 echo '==> Cleaning old .eap files...'
 rm -f "$REPO_ROOT"/*.eap
 rm -rf "$REPO_ROOT/debug"
