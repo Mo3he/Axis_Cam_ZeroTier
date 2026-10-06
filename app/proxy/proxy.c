@@ -951,6 +951,11 @@ static void sig_handler(int sig) {
         shutdown_requested = 1;
 }
 
+/* libzt 1.8.10 leaks every event payload unless a handler is set (libzt#244). */
+static void on_zts_event(void *msg) {
+    (void)msg;
+}
+
 /* ── main ────────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[]) {
@@ -992,6 +997,7 @@ int main(int argc, char *argv[]) {
         syslog(LOG_ERR, "zts_init_from_storage failed: %d", rc);
         return 1;
     }
+    zts_init_set_event_handler(on_zts_event);
 
     /* Keep the same UDP port across restarts. With a random port, every peer
        keeps sending to the previous one and needs minutes to re-path. */

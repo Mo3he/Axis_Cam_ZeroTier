@@ -5,6 +5,17 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## 1.16.16 - 2026-10-06
+
+- Fix a memory leak that grew without limit and could exhaust the device's
+  memory. libzt 1.8.10 never frees ZeroTier node, network and peer event data
+  unless the app registers an event handler
+  ([libzt#244](https://github.com/zerotier/libzt/issues/244), fixed upstream but
+  not in any release). The app now registers one. Measured before the fix: about
+  25 MB per day, reaching 915 MB after 36 days on an S3008 recorder. On devices
+  with little RAM this is a likely cause of unexplained restarts. Memory now
+  stays flat.
+
 ## 1.16.15 - 2026-08-21
 
 - Update to upstream 1.16.2.

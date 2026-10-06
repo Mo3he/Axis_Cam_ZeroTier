@@ -6,7 +6,7 @@
     "type": "github-release",
     "repo": "zerotier/ZeroTierOne",
     "stripV": true,
-    "note": "App version aligns exactly to ZT core; 1.16.14 rebases down to 1.16.2 (downgrade accepted).",
+    "note": "App version follows ZT core, but the app line (1.16.15+) is ahead of ZT core 1.16.2, so releases bump the patch until upstream passes it.",
     "name": "ZeroTier One",
     "changesUrl": "https://github.com/zerotier/ZeroTierOne/releases/tag/${UPSTREAM}"
   },
