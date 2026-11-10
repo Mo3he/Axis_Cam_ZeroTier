@@ -16,6 +16,7 @@
       "architecture": "BUILDARCH",
       "compatibleOsVersions": [
         {
+          "min": "12.10.68",
           "max": "13"
         }
       ]
