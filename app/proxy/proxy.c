@@ -36,7 +36,7 @@
 #define STATUS_FILE_TMP   "/usr/local/packages/ZeroTier_VPN/html/status.json.tmp"
 #define RELAY_BUF_SIZE    8192
 
-/* Transparent port-forwarding: ZeroTier-IP:port → 127.0.0.1:port */
+/* Transparent port-forwarding: ZeroTier-IP:port → camera port */
 #define MAX_FORWARD_PORTS 16
 static const int DEFAULT_FORWARD_PORTS[] = { 80, 443, 554 };
 #define DEFAULT_FORWARD_PORT_COUNT (sizeof(DEFAULT_FORWARD_PORTS) / sizeof(DEFAULT_FORWARD_PORTS[0]))
@@ -347,6 +347,47 @@ static void relay(int zt_fd, int local_fd) {
 
 /* ── transparent port forwarder ──────────────────────────────────── */
 
+/* Camera services are dialed on [::1]. The web server's loopback virtual hosts
+   differ by AXIS OS version: AXIS OS 13 answers 127.0.0.1 in plain HTTP on
+   every port, 443 included, and AXIS OS 12 does the same for other 127.x
+   addresses. Both serve [::1] like the network, with TLS on 443. */
+
+/* Connects with 10 s connect timeouts, which the caller clears. */
+static int connect_with_timeout(const struct sockaddr *sa, socklen_t len) {
+    int fd = socket(sa->sa_family, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+
+    struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    if (connect(fd, sa, len) < 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* Connects to a camera port on [::1], falling back to 127.0.0.1 so services
+   that listen only there (such as port 80 on an HTTPS-only device) stay
+   reachable. */
+static int connect_camera(int port) {
+    struct sockaddr_in6 a6;
+    memset(&a6, 0, sizeof(a6));
+    a6.sin6_family = AF_INET6;
+    a6.sin6_port = htons((uint16_t)port);
+    a6.sin6_addr = in6addr_loopback;
+    int fd = connect_with_timeout((struct sockaddr *)&a6, sizeof(a6));
+    if (fd >= 0) return fd;
+
+    struct sockaddr_in a4;
+    memset(&a4, 0, sizeof(a4));
+    a4.sin_family = AF_INET;
+    a4.sin_port = htons((uint16_t)port);
+    a4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    return connect_with_timeout((struct sockaddr *)&a4, sizeof(a4));
+}
+
 typedef struct {
     int port;
     char zt_addr[ZTS_IP_MAX_STR_LEN];
@@ -411,7 +452,7 @@ static void *port_forwarder(void *arg) {
     }
     zts_set_blocking(srv, 0);
 
-    syslog(LOG_INFO, "proxy: forwarding %s:%d → 127.0.0.1:%d",
+    syslog(LOG_INFO, "proxy: forwarding %s:%d → [::1]:%d",
            fctx->zt_addr, port, port);
 
     while (!shutdown_requested && atomic_load(&g_server_epoch) == my_epoch) {
@@ -421,25 +462,9 @@ static void *port_forwarder(void *arg) {
             continue;
         }
 
-        int local = socket(AF_INET, SOCK_STREAM, 0);
+        int local = connect_camera(port);
         if (local < 0) {
             zts_bsd_close(client);
-            continue;
-        }
-
-        struct sockaddr_in laddr;
-        memset(&laddr, 0, sizeof(laddr));
-        laddr.sin_family = AF_INET;
-        laddr.sin_port = htons((uint16_t)port);
-        laddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-        struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
-        setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-        if (connect(local, (struct sockaddr *)&laddr, sizeof(laddr)) < 0) {
-            zts_bsd_close(client);
-            close(local);
             continue;
         }
 
@@ -489,7 +514,7 @@ typedef struct {
 } socks5_conn_t;
 
 /* Inbound SOCKS5 CONNECT (RFC 1928). The destination host is replaced with
-   127.0.0.1 so this only reaches camera services and is never an open proxy. */
+   the camera so this only reaches camera services and is never an open proxy. */
 static void *handle_socks5(void *arg) {
     socks5_conn_t *sc = arg;
     int zt_fd = sc->zt_fd;
@@ -540,25 +565,8 @@ static void *handle_socks5(void *arg) {
     }
     }
 
-    int local = socket(AF_INET, SOCK_STREAM, 0);
+    int local = connect_camera(port);
     if (local < 0) {
-        unsigned char err[] = { 0x05, 0x01, 0x00, 0x01, 0,0,0,0, 0,0 };
-        zts_bsd_write(zt_fd, err, sizeof(err));
-        goto fail;
-    }
-
-    struct sockaddr_in laddr;
-    memset(&laddr, 0, sizeof(laddr));
-    laddr.sin_family = AF_INET;
-    laddr.sin_port = htons(port);
-    laddr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    struct timeval tv = { .tv_sec = 10, .tv_usec = 0 };
-    setsockopt(local, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(local, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-    if (connect(local, (struct sockaddr *)&laddr, sizeof(laddr)) < 0) {
-        close(local);
         unsigned char err[] = { 0x05, 0x04, 0x00, 0x01, 0,0,0,0, 0,0 };
         zts_bsd_write(zt_fd, err, sizeof(err));
         goto fail;
