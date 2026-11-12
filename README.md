@@ -246,9 +246,6 @@ breaking changes is available for testing.
 - [ ] **Review HTTP port forwarding under HTTPS-only policy** - OS 13 enforces
   HTTPS-only connections by default. Evaluate the impact on the port 80 (HTTP)
   forwarding feature.
-- [x] **HTTPS through the tunnel** - OS 13's web server answers `127.0.0.1` in
-  plain HTTP on every port, 443 included, so forwarded ports connect to
-  `127.0.0.2` instead (verified on 13.0.114).
 - [ ] **Review install/uninstall script compliance** - Check any post-install or
   pre-uninstall scripts against the updated rules introduced in OS 13.
 
