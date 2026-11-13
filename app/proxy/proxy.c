@@ -352,6 +352,16 @@ static void relay(int zt_fd, int local_fd) {
    every port, 443 included, and AXIS OS 12 does the same for other 127.x
    addresses. Both serve [::1] like the network, with TLS on 443. */
 
+/* Tried when [::1] fails for a forwarded port. The admin chose those ports, so
+   they may reach services that listen only on 127.0.0.1 (such as port 80 on an
+   HTTPS-only device). */
+#define FORWARD_FALLBACK INADDR_LOOPBACK /* 127.0.0.1 */
+/* Tried when [::1] fails for the SOCKS5 proxy, which accepts any port. It
+   reaches services listening on IPv4 0.0.0.0 but never those bound to
+   127.0.0.1 alone, such as other apps' settings back ends, which have no login
+   of their own. */
+#define SOCKS_FALLBACK 0x7F000002u /* 127.0.0.2 */
+
 /* Connects with 10 s connect timeouts, which the caller clears. */
 static int connect_with_timeout(const struct sockaddr *sa, socklen_t len) {
     int fd = socket(sa->sa_family, SOCK_STREAM, 0);
@@ -368,10 +378,8 @@ static int connect_with_timeout(const struct sockaddr *sa, socklen_t len) {
     return fd;
 }
 
-/* Connects to a camera port on [::1], falling back to 127.0.0.1 so services
-   that listen only there (such as port 80 on an HTTPS-only device) stay
-   reachable. */
-static int connect_camera(int port) {
+/* Connects to a camera port on [::1], or on the IPv4 fallback if that fails. */
+static int connect_camera(int port, in_addr_t fallback) {
     struct sockaddr_in6 a6;
     memset(&a6, 0, sizeof(a6));
     a6.sin6_family = AF_INET6;
@@ -384,7 +392,7 @@ static int connect_camera(int port) {
     memset(&a4, 0, sizeof(a4));
     a4.sin_family = AF_INET;
     a4.sin_port = htons((uint16_t)port);
-    a4.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a4.sin_addr.s_addr = htonl(fallback);
     return connect_with_timeout((struct sockaddr *)&a4, sizeof(a4));
 }
 
@@ -462,7 +470,7 @@ static void *port_forwarder(void *arg) {
             continue;
         }
 
-        int local = connect_camera(port);
+        int local = connect_camera(port, FORWARD_FALLBACK);
         if (local < 0) {
             zts_bsd_close(client);
             continue;
@@ -565,7 +573,7 @@ static void *handle_socks5(void *arg) {
     }
     }
 
-    int local = connect_camera(port);
+    int local = connect_camera(port, SOCKS_FALLBACK);
     if (local < 0) {
         unsigned char err[] = { 0x05, 0x04, 0x00, 0x01, 0,0,0,0, 0,0 };
         zts_bsd_write(zt_fd, err, sizeof(err));

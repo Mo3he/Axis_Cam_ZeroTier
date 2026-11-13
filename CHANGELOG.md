@@ -10,9 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fix HTTPS over ZeroTier on AXIS OS 13. Its web server answers `127.0.0.1` in
   plain HTTP on every port, 443 included, so HTTPS to the camera over ZeroTier
   failed. Forwarded ports and the inbound SOCKS5 proxy now connect to `[::1]`,
-  which every AXIS OS version serves like the network (with TLS on 443), and
-  fall back to `127.0.0.1` for services that listen only there (such as port
-  80 on an HTTPS-only device).
+  which every AXIS OS version serves like the network (with TLS on 443).
+  Forwarded ports fall back to `127.0.0.1` for services that listen only there
+  (such as port 80 on an HTTPS-only device).
+- The inbound SOCKS5 proxy no longer reaches services that listen only on
+  `127.0.0.1`, such as apps' settings back ends, which have no login of their
+  own; a peer on the VPN could otherwise read or change them without the
+  camera's credentials. For services that listen only on IPv4 it falls back to
+  `127.0.0.2`, so every service reachable from the camera's LAN stays
+  reachable over the VPN.
 
 ## 1.16.16 - 2026-10-06
 
