@@ -10,6 +10,7 @@
 #include <ZeroTierSockets.h>
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -813,15 +814,36 @@ fail_local:
     return NULL;
 }
 
+/* Binds the configured loopback port, or the next of three alternates when
+   another app holds it: 8080 -> 8181/8282/8383 for HTTP (step 101) and
+   1080 -> 1081/1082/1083 for SOCKS5 (step 1). The port in use goes to the
+   status file and the log. */
+static int bind_with_fallback(int port, int step, const char *what, int *bound) {
+    for (int i = 0; i < 4; i++) {
+        int candidate = port + i * step;
+        if (candidate > 65535)
+            break;
+        int srv = make_local_server(candidate);
+        if (srv >= 0) {
+            if (i > 0)
+                syslog(LOG_WARNING, "%s: 127.0.0.1:%d is in use, using 127.0.0.1:%d instead",
+                       what, port, candidate);
+            *bound = candidate;
+            return srv;
+        }
+    }
+    return -1;
+}
+
 /* HTTP CONNECT proxy accept loop on 127.0.0.1:<configured port>. */
 static void *http_connect_server(void *arg) {
     int port = (int)(intptr_t)arg;
     int my_epoch = atomic_load(&g_server_epoch);
 
-    int srv = make_local_server(port);
+    int srv = bind_with_fallback(port, 101, "http-proxy", &port);
     if (srv < 0) {
-        syslog(LOG_ERR, "http-proxy: failed to bind 127.0.0.1:%d — "
-               "port may be in use; change HTTPProxyPort in Settings", port);
+        syslog(LOG_ERR, "http-proxy: 127.0.0.1:%d and its alternates are in use; "
+               "change HTTPProxyPort in Settings", port);
         return NULL;
     }
     atomic_store(&g_http_port_actual, port);
@@ -930,10 +952,10 @@ static void *local_socks5_server(void *arg) {
     int port = (int)(intptr_t)arg;
     int my_epoch = atomic_load(&g_server_epoch);
 
-    int srv = make_local_server(port);
+    int srv = bind_with_fallback(port, 1, "local-socks5", &port);
     if (srv < 0) {
-        syslog(LOG_ERR, "local-socks5: failed to bind 127.0.0.1:%d — "
-               "port may be in use; change SOCKS5ProxyPort in Settings", port);
+        syslog(LOG_ERR, "local-socks5: 127.0.0.1:%d and its alternates are in use; "
+               "change SOCKS5ProxyPort in Settings", port);
         return NULL;
     }
     atomic_store(&g_local_socks5_port_actual, port);
@@ -1062,7 +1084,12 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        uint64_t nwid = strtoull(cfg.network_id, NULL, 16);
+        /* A network ID is exactly 16 hex digits; anything else would join a
+           network that does not exist and wait forever for authorization. */
+        bool id_ok = strlen(cfg.network_id) == 16;
+        for (const char *c = cfg.network_id; id_ok && *c; c++)
+            id_ok = isxdigit((unsigned char)*c);
+        uint64_t nwid = id_ok ? strtoull(cfg.network_id, NULL, 16) : 0;
         if (nwid == 0) {
             syslog(LOG_ERR, "Invalid network ID: %s", cfg.network_id);
             for (int i = 0; i < 50 && !shutdown_requested && !reload_requested; i++)
@@ -1110,7 +1137,8 @@ int main(int argc, char *argv[]) {
 
         int got_addr = 0;
         for (int i = 0; i < 300 && !shutdown_requested && !reload_requested; i++) {
-            if (zts_addr_is_assigned(nwid, ZTS_AF_INET)) {
+            if (zts_addr_is_assigned(nwid, ZTS_AF_INET) &&
+                zts_net_get_status(nwid) == ZTS_NETWORK_STATUS_OK) {
                 got_addr = 1;
                 break;
             }
@@ -1204,7 +1232,46 @@ int main(int argc, char *argv[]) {
                      atomic_load(&g_local_socks5_port_actual));
 
         int heartbeat_ticks = 0;
+        int route_ticks = 0;
         while (!shutdown_requested && !reload_requested && !forward_reload_requested) {
+            /* A deauthorized member keeps its address in libzt, so the network
+               status is what tells us the controller revoked it. */
+            int net_status = zts_net_get_status(nwid);
+            if (net_status == ZTS_NETWORK_STATUS_ACCESS_DENIED ||
+                net_status == ZTS_NETWORK_STATUS_NOT_FOUND) {
+                syslog(LOG_WARNING, "Network %s %s — waiting for authorization",
+                       cfg.network_id,
+                       net_status == ZTS_NETWORK_STATUS_NOT_FOUND
+                           ? "no longer exists" : "deauthorized this node");
+                write_status("waiting_auth", node_hex, NULL, cfg.network_id, 0, 0);
+                break;
+            }
+            /* Routes pushed after joining: record them, and rejoin when the
+               gateway changes because lwIP fixes it when the netif is created. */
+            if (++route_ticks >= 6) {
+                route_ticks = 0;
+                char old_routes[sizeof(g_routes_json)];
+                snprintf(old_routes, sizeof(old_routes), "%s", g_routes_json);
+                char discovered_gw[ZTS_IP_MAX_STR_LEN] = {0};
+                refresh_managed_routes(nwid, discovered_gw, sizeof(discovered_gw));
+                if (!cfg.managed_gateway[0] &&
+                    strcmp(discovered_gw, g_gateway_str) != 0) {
+                    syslog(LOG_INFO, "Managed gateway changed to %s — rejoining",
+                           discovered_gw[0] ? discovered_gw : "none");
+                    if (discovered_gw[0])
+                        setenv("ZTS_LWIP_DEFAULT_GW4", discovered_gw, 1);
+                    else
+                        unsetenv("ZTS_LWIP_DEFAULT_GW4");
+                    snprintf(g_gateway_str, sizeof(g_gateway_str), "%s", discovered_gw);
+                    break;
+                }
+                if (strcmp(old_routes, g_routes_json) != 0) {
+                    syslog(LOG_INFO, "Managed routes updated: %s", g_routes_json);
+                    write_status("connected", node_hex, zt_addr_str, cfg.network_id,
+                                 atomic_load(&g_http_port_actual),
+                                 atomic_load(&g_local_socks5_port_actual));
+                }
+            }
             /* With custom planets, root keepalives can drop and ZeroTier silently
                loses membership without exiting; rejoin so the proxy recovers. */
             if (!zts_addr_is_assigned(nwid, ZTS_AF_INET)) {
