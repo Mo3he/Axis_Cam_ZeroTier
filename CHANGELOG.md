@@ -5,6 +5,20 @@ links to its full release notes on GitHub.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+- Report a deauthorized node. The status stayed "connected" after the
+  controller revoked the node; the app now shows "waiting for authorization"
+  and rejoins when it is authorized again.
+- Pick up managed routes added or changed after joining. A new gateway route
+  now takes effect within 30 seconds, without a restart.
+- Fall back to the next free proxy port as the README describes
+  (8181/8282/8383 for HTTP, 1081/1082/1083 for SOCKS5) when another app holds
+  the configured one.
+- Reject a Network ID that is not exactly 16 hex digits, with "Invalid network
+  ID" in the log, instead of waiting for authorization on a network that cannot
+  exist.
+
 ## 1.16.17 - 2026-11-13
 
 - Update to upstream 1.16.2.
